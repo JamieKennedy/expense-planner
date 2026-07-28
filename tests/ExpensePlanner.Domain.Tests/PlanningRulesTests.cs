@@ -96,8 +96,8 @@ public sealed class PlanningRulesTests
     public void Budget_reports_projected_remaining_and_contributor_totals()
     {
         var tag = Guid.NewGuid();
-        var first = Guid.NewGuid();
-        var second = Guid.NewGuid();
+        var first = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var second = Guid.Parse("00000000-0000-0000-0000-000000000002");
         var line = Guid.NewGuid();
 
         var overview = MonthlyOverviewCalculator.Calculate(new MonthlyOverviewInput(
