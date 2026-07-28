@@ -28,7 +28,13 @@ import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
 import { Dialog } from '~/components/ui/dialog'
 import { Field, Input, Select } from '~/components/ui/input'
-import { apiRequest, type Expense, type PagedResult, type ReferenceData } from '~/lib/api'
+import {
+  apiRequest,
+  type ContributorShare,
+  type Expense,
+  type PagedResult,
+  type ReferenceData,
+} from '~/lib/api'
 import { currentMonth, formatMoney } from '~/lib/utils'
 
 const searchSchema = z.object({
@@ -416,15 +422,17 @@ function ExpenseDialog({
       dayOfMonth: expense?.dayOfMonth ?? 1,
       moveToNextWorkingDay: expense?.moveToNextWorkingDay ?? true,
       tagIds: expense?.tagIds ?? ([] as string[]),
-      contributorIds:
-        expense?.contributorShares.map((share) => share.contributorId) ??
-        (references?.contributors[0] ? [references.contributors[0].id] : []),
+      contributorShares:
+        expense?.contributorShares.map(({ contributorId, basisPoints }) => ({
+          contributorId,
+          basisPoints,
+        })) ??
+        evenContributorShares(
+          references?.contributors[0] ? [references.contributors[0].id] : [],
+        ),
     },
     onSubmit: async ({ value }) => {
       setError(undefined)
-      const selected = value.contributorIds
-      const base = Math.floor(10_000 / selected.length)
-      const remainder = 10_000 - base * selected.length
       try {
         await apiRequest(expense ? `/api/expenses/${expense.id}` : '/api/expenses', {
           method: expense ? 'PUT' : 'POST',
@@ -435,10 +443,7 @@ function ExpenseDialog({
             dayOfMonth: Number(value.dayOfMonth),
             moveToNextWorkingDay: value.moveToNextWorkingDay,
             tagIds: value.tagIds,
-            contributorShares: selected.map((contributorId, index) => ({
-              contributorId,
-              basisPoints: base + (index < remainder ? 1 : 0),
-            })),
+            contributorShares: value.contributorShares,
           }),
         })
         await queryClient.invalidateQueries({ queryKey: ['expenses'] })
@@ -536,12 +541,11 @@ function ExpenseDialog({
             />
           )}
         </form.Field>
-        <form.Field name="contributorIds">
+        <form.Field name="contributorShares">
           {(field) => (
-            <ChoiceGroup
-              label="Contributors (split evenly)"
-              items={references?.contributors ?? []}
-              selected={field.state.value}
+            <ContributorSharesEditor
+              contributors={references?.contributors ?? []}
+              shares={field.state.value}
               onChange={field.handleChange}
             />
           )}
@@ -568,19 +572,24 @@ function ExpenseDialog({
           )}
         </form.Field>
         <form.Subscribe
-          selector={(state) => [
-            state.isSubmitting,
-            state.values.tagIds.length,
-            state.values.contributorIds.length,
-          ]}
+          selector={(state) => ({
+            isSubmitting: state.isSubmitting,
+            tagCount: state.values.tagIds.length,
+            contributorCount: state.values.contributorShares.length,
+            totalBasisPoints: state.values.contributorShares.reduce(
+              (sum, share) => sum + share.basisPoints,
+              0,
+            ),
+          })}
         >
-          {([isSubmitting, tagCount, contributorCount]) => (
+          {({ isSubmitting, tagCount, contributorCount, totalBasisPoints }) => (
             <Button
               type="submit"
               disabled={
-                Boolean(isSubmitting) ||
-                Number(tagCount) === 0 ||
-                Number(contributorCount) === 0
+                isSubmitting ||
+                tagCount === 0 ||
+                contributorCount === 0 ||
+                totalBasisPoints !== 10_000
               }
             >
               {isSubmitting ? 'Saving…' : 'Save expense'}
@@ -590,6 +599,110 @@ function ExpenseDialog({
       </form>
     </Dialog>
   )
+}
+
+function ContributorSharesEditor({
+  contributors,
+  shares,
+  onChange,
+}: {
+  contributors: Array<{ id: string; name: string }>
+  shares: ContributorShare[]
+  onChange: (shares: ContributorShare[]) => void
+}) {
+  const total = shares.reduce((sum, share) => sum + share.basisPoints, 0)
+  return (
+    <fieldset>
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <legend className="text-sm font-medium text-slate-300">Contributor split</legend>
+        <div className="flex items-center gap-3">
+          <span
+            className={
+              total === 10_000 ? 'text-xs text-teal-300' : 'text-xs text-rose-300'
+            }
+          >
+            {(total / 100).toFixed(2)}%
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={shares.length === 0}
+            onClick={() =>
+              onChange(evenContributorShares(shares.map((share) => share.contributorId)))
+            }
+          >
+            Split evenly
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-2">
+        {contributors.map((contributor) => {
+          const share = shares.find((item) => item.contributorId === contributor.id)
+          return (
+            <div
+              key={contributor.id}
+              className="grid grid-cols-[1fr_8rem] items-center gap-4 rounded-xl border border-slate-700 p-3"
+            >
+              <label className="flex items-center gap-3 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  className="accent-teal-400"
+                  checked={Boolean(share)}
+                  onChange={(event) => {
+                    const ids = event.target.checked
+                      ? [...shares.map((item) => item.contributorId), contributor.id]
+                      : shares
+                          .filter((item) => item.contributorId !== contributor.id)
+                          .map((item) => item.contributorId)
+                    onChange(evenContributorShares(ids))
+                  }}
+                />
+                {contributor.name}
+              </label>
+              <div className="relative">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  disabled={!share}
+                  value={share ? share.basisPoints / 100 : ''}
+                  className="pr-8"
+                  aria-label={`${contributor.name} percentage`}
+                  onChange={(event) =>
+                    onChange(
+                      shares.map((item) =>
+                        item.contributorId === contributor.id
+                          ? {
+                              ...item,
+                              basisPoints: Math.round(Number(event.target.value) * 100),
+                            }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                  %
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </fieldset>
+  )
+}
+
+function evenContributorShares(contributorIds: string[]): ContributorShare[] {
+  if (contributorIds.length === 0) return []
+  const base = Math.floor(10_000 / contributorIds.length)
+  const remainder = 10_000 - base * contributorIds.length
+  return contributorIds.map((contributorId, index) => ({
+    contributorId,
+    basisPoints: base + (index < remainder ? 1 : 0),
+  }))
 }
 
 function ChoiceGroup({
