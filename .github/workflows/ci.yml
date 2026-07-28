@@ -85,12 +85,16 @@ jobs:
       - run: dotnet build ExpensePlanner.slnx --configuration Release --no-restore
       - run: dotnet test tests/ExpensePlanner.IntegrationTests --configuration Release --no-build
       - run: dotnet run --project src/backend/ExpensePlanner.Admin --configuration Release --no-build -- migrate
-      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build &
+      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build --no-launch-profile &
       - run: |
           for attempt in {1..30}; do
-            curl --fail http://localhost:5080/openapi/v1.json && break
+            if curl --fail --silent --show-error http://localhost:5080/openapi/v1.json >/dev/null; then
+              exit 0
+            fi
             sleep 1
           done
+          echo "API did not become ready on port 5080" >&2
+          exit 1
       - run: pnpm --dir src/frontend install --frozen-lockfile
       - run: pnpm --dir src/frontend generate:api
       - run: git diff --exit-code -- src/frontend/src/lib/schema.d.ts
@@ -117,6 +121,26 @@ jobs:
       - run: pnpm --dir src/frontend install --frozen-lockfile
       - run: pnpm --dir src/frontend exec playwright install --with-deps chromium
       - run: pnpm --dir src/frontend build
-      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build &
+      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build --no-launch-profile &
+      - name: Wait for API
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://localhost:5080/alive >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become ready on port 5080" >&2
+          exit 1
       - run: pnpm --dir src/frontend start &
+      - name: Wait for frontend
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://localhost:3000/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend did not become ready on port 3000" >&2
+          exit 1
       - run: pnpm --dir src/frontend exec playwright test
