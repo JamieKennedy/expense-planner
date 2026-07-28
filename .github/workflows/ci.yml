@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - run: dotnet restore ExpensePlanner.slnx --locked-mode
+      - run: dotnet format ExpensePlanner.slnx --verify-no-changes --no-restore
+      - run: dotnet build ExpensePlanner.slnx --configuration Release --no-restore
+      - run: dotnet test ExpensePlanner.slnx --configuration Release --no-build --filter "FullyQualifiedName!~IntegrationTests"
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: src/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: expense_planner
+          POSTGRES_USER: expense_planner
+          POSTGRES_PASSWORD: integration
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U expense_planner -d expense_planner"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:8.2-alpine
+        ports: ["6379:6379"]
+    env:
+      RUN_INTEGRATION_TESTS: "true"
+      ConnectionStrings__expense-planner: Host=localhost;Database=expense_planner;Username=expense_planner;Password=integration
+      ConnectionStrings__cache: localhost:6379
+      ASPNETCORE_URLS: http://localhost:5080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: dotnet restore ExpensePlanner.slnx --locked-mode
+      - run: dotnet build ExpensePlanner.slnx --configuration Release --no-restore
+      - run: dotnet test tests/ExpensePlanner.IntegrationTests --configuration Release --no-build
+      - run: dotnet run --project src/backend/ExpensePlanner.Admin --configuration Release --no-build -- migrate
+      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build &
+      - run: |
+          for attempt in {1..30}; do
+            curl --fail http://localhost:5080/openapi/v1.json && break
+            sleep 1
+          done
+      - run: pnpm --dir src/frontend install --frozen-lockfile
+      - run: pnpm --dir src/frontend generate:api
+      - run: git diff --exit-code -- src/frontend/src/lib/schema.d.ts
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    env:
+      ASPNETCORE_URLS: http://localhost:5080
+      API_INTERNAL_URL: http://localhost:5080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: dotnet restore ExpensePlanner.slnx --locked-mode
+      - run: dotnet build src/backend/ExpensePlanner.Api --configuration Release --no-restore
+      - run: pnpm --dir src/frontend install --frozen-lockfile
+      - run: pnpm --dir src/frontend exec playwright install --with-deps chromium
+      - run: pnpm --dir src/frontend build
+      - run: dotnet run --project src/backend/ExpensePlanner.Api --configuration Release --no-build &
+      - run: pnpm --dir src/frontend start &
+      - run: pnpm --dir src/frontend exec playwright test

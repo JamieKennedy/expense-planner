@@ -1,0 +1,36 @@
+name: Feature slice
+description: Propose an independently mergeable product slice
+title: "feat: "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: User outcome
+      description: Describe the behavior a user or operator can observe.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance scenarios
+      description: Include happy path, error, isolation and responsive/accessibility cases.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Explicit exclusions
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Delivery phase
+      options:
+        - 1 — Foundation and operations
+        - 2 — Identity and planner isolation
+        - 3 — Planner reference data
+        - 4 — Monthly commitments
+        - 5 — Budget and reporting
+        - 6 — Production hardening
+    validations:
+      required: true

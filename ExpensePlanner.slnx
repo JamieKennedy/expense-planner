@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/backend/">
+    <Project Path="src/backend/ExpensePlanner.Admin/ExpensePlanner.Admin.csproj" />
+    <Project Path="src/backend/ExpensePlanner.Api/ExpensePlanner.Api.csproj" />
+    <Project Path="src/backend/ExpensePlanner.Application/ExpensePlanner.Application.csproj" />
+    <Project Path="src/backend/ExpensePlanner.Domain/ExpensePlanner.Domain.csproj" />
+    <Project Path="src/backend/ExpensePlanner.Infrastructure/ExpensePlanner.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/orchestration/">
+    <Project Path="src/orchestration/ExpensePlanner.AppHost/ExpensePlanner.AppHost.csproj" />
+    <Project Path="src/orchestration/ExpensePlanner.ServiceDefaults/ExpensePlanner.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ExpensePlanner.Application.Tests/ExpensePlanner.Application.Tests.csproj" />
+    <Project Path="tests/ExpensePlanner.Domain.Tests/ExpensePlanner.Domain.Tests.csproj" />
+    <Project Path="tests/ExpensePlanner.IntegrationTests/ExpensePlanner.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
