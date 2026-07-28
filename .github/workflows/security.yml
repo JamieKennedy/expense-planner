@@ -38,9 +38,9 @@ jobs:
       - name: Validate and build Compose
         env:
           POSTGRES_PASSWORD: validation-only
-          JWT_PRIVATE_KEY_FILE: jwt-private.pem
+          JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/expense-planner-ci-jwt.pem
         run: |
-          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$JWT_PRIVATE_KEY_FILE"
           docker compose config --quiet
           docker compose build
       - uses: aquasecurity/trivy-action@master
