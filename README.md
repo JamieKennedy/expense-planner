@@ -130,7 +130,7 @@ first-owner registration, production DNS, backups and Admin CLI commands, follow
 
 ## First user and account recovery
 
-On an empty database, open `http://localhost:3000`. The application redirects to
+On an empty database, open `https://localhost`. The application redirects to
 `/register`, where you enter the first owner's email. Registration creates a one-hour
 setup session and then asks for a password and whether to enable an authenticator. Ten
 single-use recovery codes are displayed when authenticator MFA is enabled. MFA is

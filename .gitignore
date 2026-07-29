@@ -24,6 +24,7 @@ aspire-manifest.json
 *.pfx
 *.pem
 *.key
+*.crt
 
 # Local configuration
 .env
