@@ -204,9 +204,10 @@ pnpm --dir src/frontend build
 ```
 
 Set `RUN_INTEGRATION_TESTS=true` to enable Docker-backed PostgreSQL integration tests.
-CI also verifies the generated TypeScript OpenAPI declarations, Playwright flows,
-Compose configuration, source dependencies and filesystem vulnerability gates. CI does
-not build Compose images; image builds are performed during deployment.
+CI also verifies the generated TypeScript OpenAPI declarations, Compose configuration,
+source dependencies and filesystem vulnerability gates. Playwright flows remain
+available for local or manual verification but do not run in CI. CI does not build
+Compose images; image builds are performed during deployment.
 
 ## Backup and restore
 
