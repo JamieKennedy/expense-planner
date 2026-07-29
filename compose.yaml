@@ -92,6 +92,12 @@ services:
     environment:
       APP_HOST: ${APP_HOST:-localhost}
     ports:
+      - name: open-app
+        target: 3000
+        published: "3000"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        app_protocol: http
       - name: web
         target: 80
         published: "80"

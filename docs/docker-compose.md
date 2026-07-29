@@ -100,9 +100,13 @@ docker compose logs --follow api
 ```
 
 Open [https://localhost](https://localhost). In Docker Desktop, expand the
-`expense-planner` application and click the published `443` link on the `caddy`
-container. Caddy is the public HTTPS entry point for both the frontend and `/api`; the
-Node `frontend` container intentionally has no directly published port.
+`expense-planner` application and click the published `3000` link on the `caddy`
+container. That localhost-only HTTP helper redirects the browser to the public HTTPS
+endpoint on port 443. Do not use Docker Desktop's `443` link if it formats that link as
+`http://localhost:443`; an HTTP request cannot be sent directly to an HTTPS listener.
+
+Caddy is the public HTTPS entry point for both the frontend and `/api`; the Node
+`frontend` container intentionally has no directly published port.
 
 On an empty database the application opens first-owner registration. Enter the owner's
 email, choose a strong password, and decide whether to use authenticator MFA. MFA is
