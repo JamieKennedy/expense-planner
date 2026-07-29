@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/node_modules
+.pnpm-store
+**/.output
+.git
+.github
+.vs
+.idea
+TestResults
+coverage
+.env

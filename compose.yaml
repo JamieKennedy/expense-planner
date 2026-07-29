@@ -1,0 +1,113 @@
+name: expense-planner
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: expense_planner
+      POSTGRES_USER: expense_planner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense_planner -d expense_planner"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  admin:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: src/backend/Dockerfile
+      target: admin
+    restart: "no"
+    command: ["health"]
+    environment:
+      ConnectionStrings__expense-planner: Host=postgres;Port=5432;Database=expense_planner;Username=expense_planner;Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__cache: redis:6379
+      Jwt__SigningKeyPath: /run/secrets/jwt_private_key
+    secrets:
+      - jwt_private_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: src/backend/Dockerfile
+      target: api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__expense-planner: Host=postgres;Port=5432;Database=expense_planner;Username=expense_planner;Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__cache: redis:6379
+      Jwt__Issuer: expense-planner
+      Jwt__Audience: expense-planner-web
+      Jwt__SigningKeyPath: /run/secrets/jwt_private_key
+    secrets:
+      - jwt_private_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    build:
+      context: .
+      dockerfile: src/frontend/Dockerfile
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:8080
+      PORT: 3000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      APP_HOST: ${APP_HOST:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  jwt_private_key:
+    file: ${JWT_PRIVATE_KEY_FILE:?set JWT_PRIVATE_KEY_FILE}
