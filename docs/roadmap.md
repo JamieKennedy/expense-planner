@@ -48,7 +48,7 @@ mergeable slices.
 - Full bootstrap/invite Playwright journeys
 - Compose startup, refresh and graceful-restart smoke tests
 - Accessibility and responsive audits
-- Dependency, CodeQL and high/critical container vulnerability gates
+- Dependency and high/critical filesystem vulnerability gates
 - Restore drill and release promotion checklist
 
 ## Explicitly later
