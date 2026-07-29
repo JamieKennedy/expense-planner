@@ -99,10 +99,15 @@ docker compose logs --tail 200 postgres redis api frontend caddy
 docker compose logs --follow api
 ```
 
-Open [https://localhost](https://localhost). On an empty database the application opens
-first-owner registration. Enter the owner's email, choose a strong password, and decide
-whether to use authenticator MFA. MFA is enabled by default and recommended, but it can
-be skipped and enabled later from Settings.
+Open [https://localhost](https://localhost). In Docker Desktop, expand the
+`expense-planner` application and click the published `443` link on the `caddy`
+container. Caddy is the public HTTPS entry point for both the frontend and `/api`; the
+Node `frontend` container intentionally has no directly published port.
+
+On an empty database the application opens first-owner registration. Enter the owner's
+email, choose a strong password, and decide whether to use authenticator MFA. MFA is
+enabled by default and recommended, but it can be skipped and enabled later from
+Settings.
 
 ## 4. Trust Caddy's local certificate
 
