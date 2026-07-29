@@ -1,0 +1,36 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+coverage/
+artifacts/
+
+# JavaScript
+node_modules/
+.pnpm-store/
+.output/
+.tanstack/
+dist/
+playwright-report/
+test-results/
+
+# Aspire and containers
+.aspire/
+aspire-manifest.json
+*.pfx
+*.pem
+*.key
+
+# Local configuration
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+
+# OS
+.DS_Store
+Thumbs.db

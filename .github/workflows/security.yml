@@ -1,0 +1,46 @@
+name: Containers and security
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  containers-security:
+    name: containers-security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: dotnet restore ExpensePlanner.slnx --locked-mode
+      - run: dotnet build ExpensePlanner.slnx --configuration Release --no-restore
+      - run: pnpm --dir src/frontend install --frozen-lockfile
+      - run: pnpm --dir src/frontend build
+      - name: Validate Compose
+        env:
+          POSTGRES_PASSWORD: validation-only
+          JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/expense-planner-ci-jwt.pem
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$JWT_PRIVATE_KEY_FILE"
+          docker compose config --quiet
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

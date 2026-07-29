@@ -1,0 +1,33 @@
+name: Branch policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-policy:
+    name: branch-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate source and target
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if [[ "$BASE" == "main" ]]; then
+            [[ "$HEAD" == "staging" || "$HEAD" == bug/hotfix-* ]] || {
+              echo "main accepts only staging or bug/hotfix-*"
+              exit 1
+            }
+          elif [[ "$BASE" == "staging" ]]; then
+            [[ "$HEAD" == feature/* || "$HEAD" == bug/* || "$HEAD" == chore/* || "$HEAD" == docs/* || "$HEAD" == "main" ]] || {
+              echo "staging accepts feature/*, bug/*, chore/*, docs/*, or main forward-merges"
+              exit 1
+            }
+          else
+            echo "Pull requests must target main or staging"
+            exit 1
+          fi

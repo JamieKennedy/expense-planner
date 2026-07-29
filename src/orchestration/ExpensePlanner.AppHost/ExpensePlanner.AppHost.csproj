@@ -1,0 +1,21 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <UserSecretsId>expense-planner-apphost-3f31452f-835c-44a0-a303-f16597925a2f</UserSecretsId>
+    <!-- Aspire injects platform-specific dashboard/orchestration packages during restore. -->
+    <NuGetLockFilePath Condition="$([MSBuild]::IsOSPlatform('Windows'))">packages.windows.lock.json</NuGetLockFilePath>
+    <NuGetLockFilePath Condition="$([MSBuild]::IsOSPlatform('Linux'))">packages.linux.lock.json</NuGetLockFilePath>
+    <NuGetLockFilePath Condition="$([MSBuild]::IsOSPlatform('OSX'))">packages.macos.lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.JavaScript" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+    <PackageReference Include="Aspire.Hosting.Redis" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\backend\ExpensePlanner.Api\ExpensePlanner.Api.csproj" />
+  </ItemGroup>
+</Project>
