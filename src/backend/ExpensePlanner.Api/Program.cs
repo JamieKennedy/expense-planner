@@ -1,13 +1,17 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using ExpensePlanner.Api;
 using ExpensePlanner.Api.Security;
 using ExpensePlanner.Application;
 using ExpensePlanner.Application.Abstractions;
 using ExpensePlanner.Infrastructure;
+using ExpensePlanner.Infrastructure.Persistence;
 using ExpensePlanner.ServiceDefaults;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,7 +30,10 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IPlannerContext, HttpPlannerContext>();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
 builder.Services.AddOpenApi();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -53,6 +60,13 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+await using (var migrationScope = app.Services.CreateAsyncScope())
+{
+    await migrationScope.ServiceProvider
+        .GetRequiredService<ExpensePlannerDbContext>()
+        .Database.MigrateAsync();
+}
+
 app.UseExceptionHandler();
 app.UseForwardedHeaders();
 app.Use(async (context, next) =>
@@ -64,7 +78,10 @@ app.Use(async (context, next) =>
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
     await next();
 });
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<CsrfMiddleware>();

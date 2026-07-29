@@ -1,6 +1,12 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-var postgres = builder.AddPostgres("postgres")
+var postgresPassword = builder.AddParameter(
+    "postgres-password",
+    new GenerateParameterDefault(),
+    secret: true,
+    persist: true);
+
+var postgres = builder.AddPostgres("postgres", password: postgresPassword)
     .WithImage("postgres", "18")
     .WithDataVolume()
     .AddDatabase("expense-planner");
@@ -18,7 +24,7 @@ var api = builder.AddProject<Projects.ExpensePlanner_Api>("api")
 builder.AddJavaScriptApp("frontend", "../../frontend", "dev")
     .WithPnpm()
     .WithReference(api)
-    .WithEnvironment("API_INTERNAL_URL", api.GetEndpoint("https"))
+    .WithEnvironment("API_INTERNAL_URL", api.GetEndpoint("http"))
     .WithHttpEndpoint(env: "PORT", port: 3000)
     .WaitFor(api);
 

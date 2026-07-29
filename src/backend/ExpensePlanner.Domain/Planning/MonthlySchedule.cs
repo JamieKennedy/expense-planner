@@ -25,6 +25,13 @@ public static class MonthlySchedule
             return date;
         }
 
+        return AdvanceToWorkingDay(date, bankHolidays);
+    }
+
+    public static DateOnly AdvanceToWorkingDay(
+        DateOnly date,
+        IReadOnlySet<DateOnly> bankHolidays)
+    {
         while (!IsWorkingDay(date, bankHolidays))
         {
             date = date.AddDays(1);

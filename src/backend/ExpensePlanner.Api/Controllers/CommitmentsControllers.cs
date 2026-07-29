@@ -1,5 +1,4 @@
 using ExpensePlanner.Application.Commitments;
-using ExpensePlanner.Application.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ExpensePlanner.Api.Controllers;
@@ -9,7 +8,7 @@ namespace ExpensePlanner.Api.Controllers;
 public sealed class ExpensesController(ICommitmentsModule module) : ControllerBase
 {
     [HttpGet]
-    public Task<PagedResult<ExpenseDto>> Get(
+    public Task<ExpensePageDto> Get(
         [FromQuery] string month,
         [FromQuery] Guid[]? accountIds,
         [FromQuery] Guid[]? tagIds,

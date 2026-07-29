@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from './button'
 
 export function Dialog({
@@ -7,16 +8,19 @@ export function Dialog({
   title,
   description,
   onClose,
+  closeDisabled = false,
   children,
 }: {
   open: boolean
   title: string
   description?: string
   onClose: () => void
+  closeDisabled?: boolean
   children: ReactNode
 }) {
-  if (!open) return null
-  return (
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
     <div
       className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm"
       role="dialog"
@@ -29,12 +33,19 @@ export function Dialog({
             <h2 className="text-xl font-semibold">{title}</h2>
             {description && <p className="mt-2 text-sm text-slate-400">{description}</p>}
           </div>
-          <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
+          <Button
+            size="icon"
+            variant="ghost"
+            disabled={closeDisabled}
+            onClick={onClose}
+            aria-label="Close"
+          >
             <X />
           </Button>
         </div>
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

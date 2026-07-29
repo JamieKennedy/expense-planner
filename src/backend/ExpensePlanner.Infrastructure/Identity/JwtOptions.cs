@@ -10,7 +10,11 @@ public sealed class JwtOptions
 
 public static class AuthCookies
 {
-    public const string AccessToken = "__Host-expense-access";
-    public const string RefreshToken = "__Secure-expense-refresh";
     public const string CsrfToken = "expense-csrf";
+
+    public static string AccessToken(bool secure) =>
+        secure ? "__Host-expense-access" : "expense-access";
+
+    public static string RefreshToken(bool secure) =>
+        secure ? "__Secure-expense-refresh" : "expense-refresh";
 }

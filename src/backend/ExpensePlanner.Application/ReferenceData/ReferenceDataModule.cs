@@ -46,7 +46,12 @@ public sealed class ReferenceDataModule(
             .AsNoTracking()
             .Where(item => item.PlannerId == plannerId && (includeArchived || !item.IsArchived))
             .OrderBy(item => item.Name)
-            .Select(item => new ReferenceItemDto(item.Id, item.Name, item.IsArchived))
+            .Select(item => new ReferenceItemDto(
+                item.Id,
+                item.Name,
+                item.IsArchived,
+                null,
+                item.IsOwner))
             .ToArrayAsync(cancellationToken);
         var tags = await dbContext.Tags
             .AsNoTracking()
@@ -81,7 +86,12 @@ public sealed class ReferenceDataModule(
             dbContext.Contributors,
             value => new Contributor(plannerContext.PlannerId, value),
             (item, value) => item.Rename(value),
-            item => new ReferenceItemDto(item.Id, item.Name, item.IsArchived),
+            item => new ReferenceItemDto(
+                item.Id,
+                item.Name,
+                item.IsArchived,
+                null,
+                item.IsOwner),
             cancellationToken);
 
     public async Task<ReferenceItemDto> SaveTagAsync(

@@ -1,37 +1,39 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   ArrowDownRight,
   ArrowUpRight,
-  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
+  Landmark,
   PieChart,
   Users,
 } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '~/components/empty-state'
+import { MonthPicker } from '~/components/month-picker'
 import { PageHeading } from '~/components/page-heading'
+import { Button } from '~/components/ui/button'
 import { Card, CardContent, CardHeader } from '~/components/ui/card'
-import { Input } from '~/components/ui/input'
 import { apiRequest, type MonthlyOverview } from '~/lib/api'
+import { moveMonth } from '~/lib/expense-schedule'
 import { currentMonth, displayMonth, formatMoney } from '~/lib/utils'
 
-const searchSchema = z.object({
-  month: z
-    .string()
-    .regex(/^\d{4}-\d{2}$/)
-    .optional(),
-})
-
 export const Route = createFileRoute('/_app/dashboard')({
-  validateSearch: searchSchema,
+  validateSearch: z.object({
+    month: z
+      .string()
+      .regex(/^\d{4}-\d{2}$/)
+      .optional(),
+  }),
   component: Dashboard,
 })
 
 function Dashboard() {
-  const navigate = Route.useNavigate()
   const rawSearch = Route.useSearch()
   const month = rawSearch.month ?? currentMonth()
+  const navigate = Route.useNavigate()
   const overview = useQuery({
     queryKey: ['monthly-overview', month],
     queryFn: () =>
@@ -44,24 +46,38 @@ function Dashboard() {
   return (
     <div className="animate-rise">
       <PageHeading
-        eyebrow="Monthly overview"
-        title={displayMonth(month)}
-        description="Your current commitments projected onto this month, including working-day adjustments."
+        eyebrow="Monthly planner"
+        title="Overview"
+        description={`Income, scheduled expenses, and budget position for ${displayMonth(month)}.`}
         actions={
-          <label className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3">
-            <CalendarDays size={18} className="text-slate-400" />
-            <Input
-              type="month"
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              aria-label="Previous month"
+              onClick={() => void navigate({ search: { month: moveMonth(month, -1) } })}
+            >
+              <ChevronLeft size={17} />
+            </Button>
+            <MonthPicker
               value={month}
-              className="border-0 bg-transparent px-0 focus:ring-0"
-              onChange={(event) =>
-                void navigate({
-                  search: { ...rawSearch, month: event.target.value },
-                  replace: true,
-                })
+              className="w-52"
+              label="Dashboard month"
+              onValueChange={(selectedMonth) =>
+                void navigate({ search: { month: selectedMonth } })
               }
             />
-          </label>
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              aria-label="Next month"
+              onClick={() => void navigate({ search: { month: moveMonth(month, 1) } })}
+            >
+              <ChevronRight size={17} />
+            </Button>
+          </div>
         }
       />
       {overview.isLoading && <DashboardSkeleton />}
@@ -78,12 +94,16 @@ function Dashboard() {
               amount={data.projectedIncomePence}
               icon={ArrowDownRight}
               tone="teal"
+              to="/income"
+              month={month}
             />
             <MetricCard
               label="Expenses out"
               amount={data.projectedExpensesPence}
               icon={ArrowUpRight}
               tone="blue"
+              to="/expenses"
+              month={month}
             />
             <MetricCard
               label="Projected net"
@@ -92,12 +112,19 @@ function Dashboard() {
               tone={data.projectedNetPence >= 0 ? 'teal' : 'rose'}
             />
           </section>
-          <section className="mt-6 grid gap-6 xl:grid-cols-2">
+          <section className="mt-6 grid gap-6 xl:grid-cols-3">
             <BreakdownCard
               title="Cost by contributor"
-              description="Your share and everyone else’s share of recurring expenses."
+              description="Your share and everyone else’s share of scheduled expenses."
               icon={Users}
               items={data.contributorCosts}
+              total={data.projectedExpensesPence}
+            />
+            <BreakdownCard
+              title="Cost by account"
+              description="Scheduled expenses grouped by the account they leave."
+              icon={Landmark}
+              items={data.accountCosts}
               total={data.projectedExpensesPence}
             />
             <BreakdownCard
@@ -163,14 +190,16 @@ function Dashboard() {
                             </div>
                           </div>
                           <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
-                            <div
-                              className={
-                                line.remainingPence >= 0
-                                  ? 'h-full rounded-full bg-teal-400'
-                                  : 'h-full rounded-full bg-rose-400'
-                              }
-                              style={{ width: `${used}%` }}
-                            />
+                            {used > 0 && (
+                              <div
+                                className={
+                                  line.remainingPence >= 0
+                                    ? 'h-full rounded-full bg-teal-400'
+                                    : 'h-full rounded-full bg-rose-400'
+                                }
+                                style={{ width: `${used}%` }}
+                              />
+                            )}
                           </div>
                         </div>
                       )
@@ -201,18 +230,22 @@ function MetricCard({
   amount,
   icon: Icon,
   tone,
+  to,
+  month,
 }: {
   label: string
   amount: number
   icon: typeof CircleDollarSign
   tone: 'teal' | 'blue' | 'rose'
+  to?: '/income' | '/expenses'
+  month?: string
 }) {
   const toneClasses = {
     teal: 'bg-teal-400/10 text-teal-300',
     blue: 'bg-blue-400/10 text-blue-300',
     rose: 'bg-rose-400/10 text-rose-300',
   }
-  return (
+  const card = (
     <Card className="overflow-hidden">
       <CardContent className="flex items-center justify-between py-6">
         <div>
@@ -228,6 +261,18 @@ function MetricCard({
         </span>
       </CardContent>
     </Card>
+  )
+  return to ? (
+    <Link
+      to={to}
+      search={month ? { month } : undefined}
+      className="rounded-2xl outline-none transition hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-400"
+      aria-label={`${label}: ${formatMoney(amount)}. View details.`}
+    >
+      {card}
+    </Link>
+  ) : (
+    card
   )
 }
 
@@ -273,12 +318,14 @@ function BreakdownCard({
                   <span className="font-semibold">{formatMoney(item.amountPence)}</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-slate-800">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-teal-400 to-blue-400"
-                    style={{
-                      width: `${total > 0 ? Math.max((item.amountPence / total) * 100, 2) : 0}%`,
-                    }}
-                  />
+                  {item.amountPence > 0 && total > 0 && (
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-teal-400 to-blue-400"
+                      style={{
+                        width: `${Math.max((item.amountPence / total) * 100, 2)}%`,
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             ))}

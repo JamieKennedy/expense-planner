@@ -5,12 +5,23 @@ import { CalendarClock, Landmark, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { z } from 'zod'
 import { EmptyState } from '~/components/empty-state'
+import { MonthPicker } from '~/components/month-picker'
 import { PageHeading } from '~/components/page-heading'
+import { ReferenceCreateButton } from '~/components/reference-create-button'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
 import { Dialog } from '~/components/ui/dialog'
-import { Field, Input, Select } from '~/components/ui/input'
+import { Field, FieldError, FieldLabel } from '~/components/ui/field'
+import { Input } from '~/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '~/components/ui/select'
 import { apiRequest, type IncomeItem, type ReferenceData } from '~/lib/api'
+import { focusFirstInvalidField } from '~/lib/form'
 import { currentMonth, displayMonth, formatMoney } from '~/lib/utils'
 
 const searchSchema = z.object({
@@ -67,12 +78,11 @@ function IncomePage() {
           <p className="text-sm text-slate-400">{displayMonth(month)} projected income</p>
           <p className="mt-1 text-2xl font-semibold">{formatMoney(total)}</p>
         </div>
-        <Input
-          type="month"
+        <MonthPicker
           value={month}
           className="sm:w-48"
-          onChange={(event) =>
-            void navigate({ search: { ...rawSearch, month: event.target.value } })
+          onValueChange={(selectedMonth) =>
+            void navigate({ search: { ...rawSearch, month: selectedMonth } })
           }
         />
       </div>
@@ -201,70 +211,133 @@ function IncomeDialog({
       onClose={onClose}
     >
       <form
+        noValidate
         className="grid gap-5"
         onSubmit={(event) => {
           event.preventDefault()
-          void form.handleSubmit()
+          void form.handleSubmit().then(focusFirstInvalidField)
         }}
       >
         {error && <p className="rounded-xl bg-rose-400/10 p-3 text-rose-200">{error}</p>}
         <div className="grid gap-5 sm:grid-cols-2">
-          <form.Field name="name">
-            {(field) => (
-              <Field label="Name">
-                <Input
-                  required
-                  value={field.state.value}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
-              </Field>
-            )}
+          <form.Field
+            name="name"
+            validators={{
+              onChange: ({ value }) =>
+                value.trim() ? undefined : 'Enter an income name.',
+            }}
+          >
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
+              return (
+                <Field invalid={Boolean(validationError)}>
+                  <FieldLabel htmlFor={field.name}>Name</FieldLabel>
+                  <Input
+                    id={field.name}
+                    value={field.state.value}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                  <FieldError>{validationError}</FieldError>
+                </Field>
+              )
+            }}
           </form.Field>
-          <form.Field name="amount">
-            {(field) => (
-              <Field label="Amount (£)">
-                <Input
-                  required
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={field.state.value}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
-              </Field>
-            )}
+          <form.Field
+            name="amount"
+            validators={{
+              onChange: ({ value }) =>
+                Number(value) > 0 ? undefined : 'Enter an amount greater than £0.00.',
+            }}
+          >
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
+              return (
+                <Field invalid={Boolean(validationError)}>
+                  <FieldLabel htmlFor={field.name}>Amount (£)</FieldLabel>
+                  <Input
+                    id={field.name}
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={field.state.value}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                  <FieldError>{validationError}</FieldError>
+                </Field>
+              )
+            }}
           </form.Field>
-          <form.Field name="accountId">
-            {(field) => (
-              <Field label="Destination account">
-                <Select
-                  required
-                  value={field.state.value}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                >
-                  <option value="">Choose account</option>
-                  {references?.accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
+          <form.Field
+            name="accountId"
+            validators={{
+              onChange: ({ value }) =>
+                value ? undefined : 'Choose the destination account.',
+            }}
+          >
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
+              return (
+                <Field invalid={Boolean(validationError)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <FieldLabel htmlFor={`${field.name}-trigger`}>
+                      Destination account
+                    </FieldLabel>
+                    <ReferenceCreateButton
+                      kind="accounts"
+                      onCreated={(created) => field.handleChange(created.id)}
+                    />
+                  </div>
+                  <Select value={field.state.value} onValueChange={field.handleChange}>
+                    <SelectTrigger
+                      id={`${field.name}-trigger`}
+                      aria-invalid={Boolean(validationError) || undefined}
+                      onBlur={field.handleBlur}
+                    >
+                      <SelectValue placeholder="Choose account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {references?.accounts.map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldError>{validationError}</FieldError>
+                </Field>
+              )
+            }}
           </form.Field>
-          <form.Field name="dayOfMonth">
-            {(field) => (
-              <Field label="Day of month">
-                <Input
-                  required
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={field.state.value}
-                  onChange={(event) => field.handleChange(Number(event.target.value))}
-                />
-              </Field>
-            )}
+          <form.Field
+            name="dayOfMonth"
+            validators={{
+              onChange: ({ value }) =>
+                value >= 1 && value <= 31 ? undefined : 'Choose a day from 1 to 31.',
+            }}
+          >
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
+              return (
+                <Field invalid={Boolean(validationError)}>
+                  <FieldLabel htmlFor={field.name}>Day of month</FieldLabel>
+                  <Input
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={field.state.value}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(Number(event.target.value))}
+                  />
+                  <FieldError>{validationError}</FieldError>
+                </Field>
+              )
+            }}
           </form.Field>
         </div>
         <form.Field name="moveToNextWorkingDay">
@@ -289,5 +362,11 @@ function IncomeDialog({
         </form.Subscribe>
       </form>
     </Dialog>
+  )
+}
+
+function firstError(errors: unknown[]) {
+  return errors.find(
+    (error): error is string => typeof error === 'string' && error.length > 0,
   )
 }

@@ -7,11 +7,26 @@ export type Session = {
   email: string
 }
 
+export type RegistrationStatus = {
+  available: boolean
+}
+
+export type SecurityStatus = {
+  mfaEnabled: boolean
+}
+
+export type MfaEnrollment = {
+  challengeId: string
+  sharedKey: string
+  authenticatorUri: string
+}
+
 export type ReferenceItem = {
   id: string
   name: string
   isArchived: boolean
   colour?: string
+  isOwner: boolean
 }
 
 export type ReferenceData = {
@@ -30,9 +45,13 @@ export type Expense = {
   id: string
   name: string
   amountPence: number
+  attributedAmountPence: number
   accountId: string
   accountName: string
-  dayOfMonth: number
+  frequency: 'monthly' | 'weekly' | null
+  scheduleAnchorDate: string | null
+  dayOfMonth: number | null
+  nominalDate: string
   dueDate: string
   moveToNextWorkingDay: boolean
   tagIds: string[]
@@ -63,11 +82,12 @@ export type BudgetTemplate = {
   lines: BudgetLine[]
 }
 
-export type PagedResult<T> = {
-  items: T[]
+export type ExpensePage = {
+  items: Expense[]
   page: number
   pageSize: number
-  total: number
+  totalCount: number
+  totalAmountPence: number
 }
 
 export type MonthlyOverview = {
@@ -76,6 +96,11 @@ export type MonthlyOverview = {
   projectedExpensesPence: number
   projectedNetPence: number
   contributorCosts: Array<{
+    id: string
+    name: string
+    amountPence: number
+  }>
+  accountCosts: Array<{
     id: string
     name: string
     amountPence: number
@@ -122,7 +147,7 @@ function csrfToken() {
   if (typeof document === 'undefined') return undefined
   return document.cookie
     .split('; ')
-    .find((part) => part.startsWith('expense_csrf='))
+    .find((part) => part.startsWith('expense-csrf='))
     ?.split('=')
     .slice(1)
     .join('=')
@@ -218,3 +243,15 @@ async function forwardSessionRequest() {
 }
 
 export const getSession = createServerFn({ method: 'GET' }).handler(forwardSessionRequest)
+
+async function registrationStatusRequest() {
+  const internalUrl = process.env.API_INTERNAL_URL ?? 'http://localhost:5080'
+  const response = await fetch(`${internalUrl}/api/auth/registration`)
+  return response.ok
+    ? ((await response.json()) as RegistrationStatus)
+    : { available: false }
+}
+
+export const getRegistrationStatus = createServerFn({ method: 'GET' }).handler(
+  registrationStatusRequest,
+)

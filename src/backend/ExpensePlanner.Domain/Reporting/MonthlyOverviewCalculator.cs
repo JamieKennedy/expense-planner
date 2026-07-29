@@ -8,6 +8,9 @@ public static class MonthlyOverviewCalculator
     {
         var projectedExpenses = input.Expenses.Sum(expense => expense.AmountPence);
         var projectedIncome = input.IncomeItems.Sum(income => income.AmountPence);
+        var accountCosts = input.Expenses
+            .GroupBy(expense => expense.AccountId)
+            .ToDictionary(group => group.Key, group => group.Sum(expense => expense.AmountPence));
 
         var contributorCosts = new Dictionary<Guid, long>();
         foreach (var expense in input.Expenses)
@@ -45,11 +48,11 @@ public static class MonthlyOverviewCalculator
         }).ToArray();
 
         return new MonthlyOverview(
-            input.Month,
             projectedIncome,
             projectedExpenses,
             projectedIncome - projectedExpenses,
             contributorCosts,
+            accountCosts,
             tagCosts,
             budgetLines,
             budgetContributions);
@@ -57,7 +60,6 @@ public static class MonthlyOverviewCalculator
 }
 
 public sealed record MonthlyOverviewInput(
-    string Month,
     IReadOnlyCollection<ExpenseOverviewInput> Expenses,
     IReadOnlyCollection<IncomeOverviewInput> IncomeItems,
     IReadOnlyCollection<TagOverviewInput> Tags,
@@ -66,6 +68,7 @@ public sealed record MonthlyOverviewInput(
 public sealed record ExpenseOverviewInput(
     Guid Id,
     long AmountPence,
+    Guid AccountId,
     IReadOnlyCollection<Guid> TagIds,
     IReadOnlyCollection<ContributorShareValue> Shares);
 
@@ -81,11 +84,11 @@ public sealed record BudgetLineOverviewInput(
     IReadOnlyCollection<ContributorShareValue> Shares);
 
 public sealed record MonthlyOverview(
-    string Month,
     long ProjectedIncomePence,
     long ProjectedExpensesPence,
     long ProjectedNetPence,
     IReadOnlyDictionary<Guid, long> ContributorCostsPence,
+    IReadOnlyDictionary<Guid, long> AccountCostsPence,
     IReadOnlyDictionary<Guid, long> TagCostsPence,
     IReadOnlyCollection<BudgetLineOverview> BudgetLines,
     IReadOnlyDictionary<Guid, long> BudgetContributionsPence);

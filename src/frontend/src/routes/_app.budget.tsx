@@ -1,21 +1,37 @@
+import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { BarChart3, Pencil, Plus, Save, Trash2, Users } from 'lucide-react'
+import { BarChart3, Pencil, Plus, Trash2, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { ContributorSharesEditor } from '~/components/contributor-shares-editor'
 import { EmptyState } from '~/components/empty-state'
 import { PageHeading } from '~/components/page-heading'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
 import { Dialog } from '~/components/ui/dialog'
-import { Field, Input, Select } from '~/components/ui/input'
+import { Field, FieldError, FieldLabel } from '~/components/ui/field'
+import { Input } from '~/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '~/components/ui/select'
 import {
   apiRequest,
   type BudgetLine,
   type BudgetTemplate,
-  type ContributorShare,
   type ReferenceData,
 } from '~/lib/api'
+import {
+  removeBudgetLine,
+  replaceBudgetTemplate,
+  upsertBudgetLine,
+} from '~/lib/budget-template'
+import { evenContributorShares } from '~/lib/contributor-split'
+import { focusFirstInvalidField } from '~/lib/form'
 import { formatMoney } from '~/lib/utils'
 
 export const Route = createFileRoute('/_app/budget')({
@@ -24,9 +40,9 @@ export const Route = createFileRoute('/_app/budget')({
 
 function BudgetPage() {
   const queryClient = useQueryClient()
-  const [draftLines, setLines] = useState<BudgetLine[]>()
   const [editing, setEditing] = useState<BudgetLine | null | undefined>()
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string>()
   const references = useQuery({
     queryKey: ['reference-data'],
     queryFn: () => apiRequest<ReferenceData>('/api/reference-data?includeArchived=false'),
@@ -35,30 +51,22 @@ function BudgetPage() {
     queryKey: ['budget-template'],
     queryFn: () => apiRequest<BudgetTemplate>('/api/budget-template'),
   })
-  const lines = useMemo(
-    () => draftLines ?? budget.data?.lines ?? [],
-    [budget.data?.lines, draftLines],
-  )
+  const lines = useMemo(() => budget.data?.lines ?? [], [budget.data?.lines])
 
   const save = useMutation({
-    mutationFn: () =>
-      apiRequest<BudgetTemplate>('/api/budget-template', {
-        method: 'PUT',
-        body: JSON.stringify({
-          lines: lines.map(({ name, allowancePence, tagId, contributorShares }) => ({
-            name,
-            allowancePence,
-            tagId,
-            contributorShares,
-          })),
-        }),
-      }),
+    mutationFn: replaceBudgetTemplate,
+    onMutate: () => {
+      setSaveError(undefined)
+      setSaved(false)
+    },
     onSuccess: async (result) => {
-      setLines(result.lines)
+      queryClient.setQueryData<BudgetTemplate>(['budget-template'], result)
       setSaved(true)
       window.setTimeout(() => setSaved(false), 2500)
-      await queryClient.invalidateQueries({ queryKey: ['budget-template'] })
       await queryClient.invalidateQueries({ queryKey: ['monthly-overview'] })
+    },
+    onError: (error) => {
+      setSaveError(error instanceof Error ? error.message : 'Unable to save the budget.')
     },
   })
 
@@ -84,22 +92,34 @@ function BudgetPage() {
       <PageHeading
         eyebrow="Recurring template"
         title="Monthly budget"
-        description="Set one allowance per tag and decide how each line is shared."
+        description="Set one allowance per tag and decide how each line is shared. Changes save automatically."
         actions={
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => setEditing(null)}>
-              <Plus size={18} /> Add line
-            </Button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <p className="text-sm text-slate-400" role="status" aria-live="polite">
+              {save.isPending
+                ? 'Saving…'
+                : saved
+                  ? 'Saved'
+                  : 'Changes save automatically'}
+            </p>
             <Button
-              onClick={() => save.mutate()}
-              disabled={save.isPending || lines.length === 0}
+              variant="secondary"
+              disabled={save.isPending}
+              onClick={() => setEditing(null)}
             >
-              <Save size={18} />
-              {save.isPending ? 'Saving…' : saved ? 'Saved' : 'Save budget'}
+              <Plus size={18} /> Add line
             </Button>
           </div>
         }
       />
+      {saveError && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200"
+        >
+          {saveError}
+        </div>
+      )}
       <section className="mb-6 grid gap-4 md:grid-cols-[1fr_2fr]">
         <Card>
           <CardContent className="py-6">
@@ -146,7 +166,11 @@ function BudgetPage() {
               title="Build your monthly budget"
               description="Each line connects one tag to an allowance and a contributor split."
               action={
-                <Button size="sm" onClick={() => setEditing(null)}>
+                <Button
+                  size="sm"
+                  disabled={save.isPending}
+                  onClick={() => setEditing(null)}
+                >
                   <Plus size={16} /> Add first line
                 </Button>
               }
@@ -191,6 +215,7 @@ function BudgetPage() {
                       <Button
                         size="icon"
                         variant="ghost"
+                        disabled={save.isPending}
                         onClick={() => setEditing(line)}
                         aria-label={`Edit ${line.name}`}
                       >
@@ -199,11 +224,8 @@ function BudgetPage() {
                       <Button
                         size="icon"
                         variant="danger"
-                        onClick={() =>
-                          setLines((current) =>
-                            (current ?? lines).filter((item) => item.id !== line.id),
-                          )
-                        }
+                        disabled={save.isPending}
+                        onClick={() => save.mutate(removeBudgetLine(lines, line.id))}
                         aria-label={`Remove ${line.name}`}
                       >
                         <Trash2 size={16} />
@@ -225,13 +247,8 @@ function BudgetPage() {
             .filter((line) => line.id !== editing?.id)
             .map((line) => line.tagId)}
           onClose={() => setEditing(undefined)}
-          onSave={(line) => {
-            setLines((current) => {
-              const values = current ?? lines
-              const index = values.findIndex((item) => item.id === line.id)
-              if (index < 0) return [...values, line]
-              return values.map((item) => (item.id === line.id ? line : item))
-            })
+          onSave={async (line) => {
+            await save.mutateAsync(upsertBudgetLine(lines, line))
             setEditing(undefined)
           }}
         />
@@ -251,157 +268,198 @@ function BudgetLineDialog({
   references?: ReferenceData
   usedTagIds: string[]
   onClose: () => void
-  onSave: (line: BudgetLine) => void
+  onSave: (line: BudgetLine) => Promise<void>
 }) {
-  const [name, setName] = useState(line?.name ?? '')
-  const [allowance, setAllowance] = useState(
-    line ? String(line.allowancePence / 100) : '',
-  )
-  const [tagId, setTagId] = useState(line?.tagId ?? '')
-  const [shares, setShares] = useState<ContributorShare[]>(
-    line?.contributorShares ??
-      (references?.contributors[0]
-        ? [{ contributorId: references.contributors[0].id, basisPoints: 10_000 }]
-        : []),
-  )
-  const totalBasisPoints = shares.reduce((sum, share) => sum + share.basisPoints, 0)
+  const [saveError, setSaveError] = useState<string>()
+  const [isSaving, setIsSaving] = useState(false)
+  const defaultContributor =
+    references?.contributors.find((contributor) => contributor.isOwner) ??
+    references?.contributors[0]
+  const form = useForm({
+    defaultValues: {
+      name: line?.name ?? '',
+      allowance: line ? String(line.allowancePence / 100) : '',
+      tagId: line?.tagId ?? '',
+      shares:
+        line?.contributorShares ??
+        evenContributorShares(
+          references?.contributors ?? [],
+          defaultContributor ? [defaultContributor.id] : [],
+        ),
+    },
+    onSubmit: async ({ value }) => {
+      setSaveError(undefined)
+      setIsSaving(true)
+      try {
+        await onSave({
+          id: line?.id ?? crypto.randomUUID(),
+          name: value.name,
+          allowancePence: Math.round(Number(value.allowance) * 100),
+          tagId: value.tagId,
+          contributorShares: value.shares,
+        })
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Unable to save this line.')
+      } finally {
+        setIsSaving(false)
+      }
+    },
+  })
 
   return (
     <Dialog
       open
       title={line ? 'Edit budget line' : 'Add budget line'}
       description="Each tag can appear once. Contributor percentages must total 100%."
+      closeDisabled={isSaving}
       onClose={onClose}
     >
       <form
+        noValidate
         className="grid gap-5"
         onSubmit={(event) => {
           event.preventDefault()
-          onSave({
-            id: line?.id ?? crypto.randomUUID(),
-            name,
-            allowancePence: Math.round(Number(allowance) * 100),
-            tagId,
-            contributorShares: shares,
-          })
+          void form.handleSubmit().then(focusFirstInvalidField)
         }}
       >
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Line name">
-            <Input
-              required
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </Field>
-          <Field label="Allowance (£)">
-            <Input
-              required
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={allowance}
-              onChange={(event) => setAllowance(event.target.value)}
-            />
-          </Field>
-        </div>
-        <Field label="Budget tag">
-          <Select
-            required
-            value={tagId}
-            onChange={(event) => setTagId(event.target.value)}
+          <form.Field
+            name="name"
+            validators={{
+              onChange: ({ value }) =>
+                value.trim() ? undefined : 'Enter a budget line name.',
+            }}
           >
-            <option value="">Choose tag</option>
-            {references?.tags
-              .filter((tag) => !usedTagIds.includes(tag.id))
-              .map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.name}
-                </option>
-              ))}
-          </Select>
-        </Field>
-        <fieldset>
-          <div className="mb-3 flex justify-between">
-            <legend className="text-sm font-medium text-slate-300">
-              Contributor split
-            </legend>
-            <span
-              className={
-                totalBasisPoints === 10_000
-                  ? 'text-xs text-teal-300'
-                  : 'text-xs text-rose-300'
-              }
-            >
-              {(totalBasisPoints / 100).toFixed(2)}%
-            </span>
-          </div>
-          <div className="grid gap-3">
-            {references?.contributors.map((contributor) => {
-              const share = shares.find((item) => item.contributorId === contributor.id)
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
               return (
-                <div
-                  key={contributor.id}
-                  className="grid grid-cols-[1fr_8rem] items-center gap-4 rounded-xl border border-slate-700 p-3"
-                >
-                  <label className="flex items-center gap-3 text-sm">
-                    <input
-                      type="checkbox"
-                      className="accent-teal-400"
-                      checked={Boolean(share)}
-                      onChange={(event) =>
-                        setShares((current) =>
-                          event.target.checked
-                            ? [
-                                ...current,
-                                { contributorId: contributor.id, basisPoints: 0 },
-                              ]
-                            : current.filter(
-                                (item) => item.contributorId !== contributor.id,
-                              ),
-                        )
-                      }
-                    />
-                    {contributor.name}
-                  </label>
+                <Field invalid={Boolean(validationError)}>
+                  <FieldLabel htmlFor={field.name}>Line name</FieldLabel>
                   <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.01}
-                    disabled={!share}
-                    value={share ? share.basisPoints / 100 : ''}
-                    onChange={(event) =>
-                      setShares((current) =>
-                        current.map((item) =>
-                          item.contributorId === contributor.id
-                            ? {
-                                ...item,
-                                basisPoints: Math.round(Number(event.target.value) * 100),
-                              }
-                            : item,
-                        ),
-                      )
-                    }
+                    id={field.name}
+                    disabled={isSaving}
+                    value={field.state.value}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
                   />
-                </div>
+                  <FieldError>{validationError}</FieldError>
+                </Field>
               )
-            })}
-          </div>
-        </fieldset>
-        <Button
-          type="submit"
-          disabled={
-            totalBasisPoints !== 10_000 ||
-            shares.length === 0 ||
-            !tagId ||
-            !name ||
-            !allowance
-          }
+            }}
+          </form.Field>
+          <form.Field
+            name="allowance"
+            validators={{
+              onChange: ({ value }) =>
+                Number(value) > 0 ? undefined : 'Enter an allowance greater than £0.00.',
+            }}
+          >
+            {(field) => {
+              const validationError = firstError(field.state.meta.errors)
+              return (
+                <Field invalid={Boolean(validationError)}>
+                  <FieldLabel htmlFor={field.name}>Allowance (£)</FieldLabel>
+                  <Input
+                    id={field.name}
+                    type="number"
+                    disabled={isSaving}
+                    min="0.01"
+                    step="0.01"
+                    value={field.state.value}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                  <FieldError>{validationError}</FieldError>
+                </Field>
+              )
+            }}
+          </form.Field>
+        </div>
+        <form.Field
+          name="tagId"
+          validators={{
+            onChange: ({ value }) => (value ? undefined : 'Choose a budget tag.'),
+          }}
         >
-          Save line
-        </Button>
+          {(field) => {
+            const validationError = firstError(field.state.meta.errors)
+            return (
+              <Field invalid={Boolean(validationError)}>
+                <FieldLabel htmlFor={`${field.name}-trigger`}>Budget tag</FieldLabel>
+                <Select
+                  value={field.state.value}
+                  disabled={isSaving}
+                  onValueChange={field.handleChange}
+                >
+                  <SelectTrigger
+                    id={`${field.name}-trigger`}
+                    aria-invalid={Boolean(validationError) || undefined}
+                    onBlur={field.handleBlur}
+                  >
+                    <SelectValue placeholder="Choose tag" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {references?.tags
+                      .filter(
+                        (tag) => tag.id === line?.tagId || !usedTagIds.includes(tag.id),
+                      )
+                      .map((tag) => (
+                        <SelectItem key={tag.id} value={tag.id}>
+                          {tag.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <FieldError>{validationError}</FieldError>
+              </Field>
+            )
+          }}
+        </form.Field>
+        <form.Field
+          name="shares"
+          validators={{
+            onChange: ({ value }) =>
+              value.length === 0
+                ? 'Select at least one contributor.'
+                : value.reduce((sum, share) => sum + share.basisPoints, 0) === 10_000
+                  ? undefined
+                  : 'Contributor percentages must total 100%.',
+          }}
+        >
+          {(field) => (
+            <ContributorSharesEditor
+              contributors={references?.contributors ?? []}
+              shares={field.state.value}
+              disabled={isSaving}
+              onChange={field.handleChange}
+              error={firstError(field.state.meta.errors)}
+            />
+          )}
+        </form.Field>
+        {saveError && (
+          <div
+            role="alert"
+            className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200"
+          >
+            {saveError}
+          </div>
+        )}
+        <form.Subscribe selector={(state) => state.isSubmitting}>
+          {(isSubmitting) => (
+            <Button type="submit" disabled={isSubmitting || isSaving}>
+              {isSubmitting || isSaving ? 'Saving…' : 'Save line'}
+            </Button>
+          )}
+        </form.Subscribe>
       </form>
     </Dialog>
+  )
+}
+
+function firstError(errors: unknown[]) {
+  return errors.find(
+    (error): error is string => typeof error === 'string' && error.length > 0,
   )
 }

@@ -1,12 +1,14 @@
 import { useForm } from '@tanstack/react-form'
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect, useRouter } from '@tanstack/react-router'
 import { CircleDollarSign, KeyRound, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { z } from 'zod'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
-import { Field, Input } from '~/components/ui/input'
-import { ApiError, apiRequest } from '~/lib/api'
+import { Field, FieldError, FieldLabel } from '~/components/ui/field'
+import { Input } from '~/components/ui/input'
+import { ApiError, apiRequest, getRegistrationStatus } from '~/lib/api'
+import { focusFirstInvalidField } from '~/lib/form'
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
@@ -14,6 +16,11 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute('/login')({
   validateSearch: searchSchema,
+  beforeLoad: async () => {
+    if ((await getRegistrationStatus()).available) {
+      throw redirect({ to: '/register' })
+    }
+  },
   component: LoginPage,
 })
 
@@ -30,12 +37,17 @@ function LoginPage() {
       try {
         const result = await apiRequest<{
           requiresMfa: boolean
-          challengeId: string
+          challengeId: string | null
         }>('/api/auth/login', {
           method: 'POST',
           body: JSON.stringify(value),
         })
-        setChallengeId(result.challengeId)
+        if (result.requiresMfa && result.challengeId) {
+          setChallengeId(result.challengeId)
+          return
+        }
+
+        await router.navigate({ href: redirect ?? '/dashboard' })
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : 'Unable to sign in.')
       }
@@ -64,7 +76,7 @@ function LoginPage() {
   })
 
   return (
-    <main className="relative grid min-h-screen place-items-center overflow-hidden bg-slate-950 p-5 text-slate-100">
+    <main className="relative grid min-h-screen place-items-center overflow-x-hidden bg-slate-950 p-5 text-slate-100">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(45,212,191,0.16),transparent_30%),radial-gradient(circle_at_85%_80%,rgba(59,130,246,0.12),transparent_35%)]" />
       <div className="relative grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70 shadow-2xl shadow-black/40 backdrop-blur lg:grid-cols-[1.1fr_0.9fr]">
         <section className="hidden min-h-[640px] flex-col justify-between border-r border-slate-800 bg-slate-950/30 p-12 lg:flex">
@@ -88,7 +100,7 @@ function LoginPage() {
           </div>
           <div className="flex gap-7 text-sm text-slate-400">
             <span className="flex items-center gap-2">
-              <ShieldCheck className="text-teal-300" size={18} /> MFA protected
+              <ShieldCheck className="text-teal-300" size={18} /> Optional MFA
             </span>
             <span className="flex items-center gap-2">
               <KeyRound className="text-teal-300" size={18} /> Invite only
@@ -113,7 +125,7 @@ function LoginPage() {
               <p className="mt-3 text-slate-400">
                 {challengeId
                   ? 'Enter the six-digit code from your authenticator, or a recovery code.'
-                  : 'There is no public registration. Use your invited or bootstrapped account.'}
+                  : 'Registration is invite-only after the first owner creates this planner.'}
               </p>
               {error && (
                 <div
@@ -125,24 +137,43 @@ function LoginPage() {
               )}
               {challengeId ? (
                 <form
+                  noValidate
                   className="mt-8 grid gap-5"
                   onSubmit={(event) => {
                     event.preventDefault()
-                    void mfaForm.handleSubmit()
+                    void mfaForm.handleSubmit().then(focusFirstInvalidField)
                   }}
                 >
-                  <mfaForm.Field name="code">
-                    {(field) => (
-                      <Field label="Authenticator or recovery code">
-                        <Input
-                          autoFocus
-                          autoComplete="one-time-code"
-                          inputMode="numeric"
-                          value={field.state.value}
-                          onChange={(event) => field.handleChange(event.target.value)}
-                        />
-                      </Field>
-                    )}
+                  <mfaForm.Field
+                    name="code"
+                    validators={{
+                      onChange: ({ value }) =>
+                        value.trim()
+                          ? undefined
+                          : 'Enter your authenticator or recovery code.',
+                    }}
+                  >
+                    {(field) => {
+                      const validationError = firstError(field.state.meta.errors)
+                      return (
+                        <Field invalid={Boolean(validationError)}>
+                          <FieldLabel htmlFor={field.name}>
+                            Authenticator or recovery code
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            autoFocus
+                            autoComplete="one-time-code"
+                            inputMode="numeric"
+                            value={field.state.value}
+                            aria-invalid={Boolean(validationError) || undefined}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError>{validationError}</FieldError>
+                        </Field>
+                      )
+                    }}
                   </mfaForm.Field>
                   <mfaForm.Subscribe selector={(state) => state.isSubmitting}>
                     {(isSubmitting) => (
@@ -161,37 +192,66 @@ function LoginPage() {
                 </form>
               ) : (
                 <form
+                  noValidate
                   className="mt-8 grid gap-5"
                   onSubmit={(event) => {
                     event.preventDefault()
-                    void loginForm.handleSubmit()
+                    void loginForm.handleSubmit().then(focusFirstInvalidField)
                   }}
                 >
-                  <loginForm.Field name="email">
-                    {(field) => (
-                      <Field label="Email address">
-                        <Input
-                          type="email"
-                          autoComplete="email"
-                          required
-                          value={field.state.value}
-                          onChange={(event) => field.handleChange(event.target.value)}
-                        />
-                      </Field>
-                    )}
+                  <loginForm.Field
+                    name="email"
+                    validators={{
+                      onChange: ({ value }) =>
+                        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+                          ? undefined
+                          : 'Enter a valid email address.',
+                    }}
+                  >
+                    {(field) => {
+                      const validationError = firstError(field.state.meta.errors)
+                      return (
+                        <Field invalid={Boolean(validationError)}>
+                          <FieldLabel htmlFor={field.name}>Email address</FieldLabel>
+                          <Input
+                            id={field.name}
+                            type="email"
+                            autoComplete="email"
+                            value={field.state.value}
+                            aria-invalid={Boolean(validationError) || undefined}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError>{validationError}</FieldError>
+                        </Field>
+                      )
+                    }}
                   </loginForm.Field>
-                  <loginForm.Field name="password">
-                    {(field) => (
-                      <Field label="Password">
-                        <Input
-                          type="password"
-                          autoComplete="current-password"
-                          required
-                          value={field.state.value}
-                          onChange={(event) => field.handleChange(event.target.value)}
-                        />
-                      </Field>
-                    )}
+                  <loginForm.Field
+                    name="password"
+                    validators={{
+                      onChange: ({ value }) =>
+                        value ? undefined : 'Enter your password.',
+                    }}
+                  >
+                    {(field) => {
+                      const validationError = firstError(field.state.meta.errors)
+                      return (
+                        <Field invalid={Boolean(validationError)}>
+                          <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                          <Input
+                            id={field.name}
+                            type="password"
+                            autoComplete="current-password"
+                            value={field.state.value}
+                            aria-invalid={Boolean(validationError) || undefined}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError>{validationError}</FieldError>
+                        </Field>
+                      )
+                    }}
                   </loginForm.Field>
                   <loginForm.Subscribe selector={(state) => state.isSubmitting}>
                     {(isSubmitting) => (
@@ -207,5 +267,11 @@ function LoginPage() {
         </section>
       </div>
     </main>
+  )
+}
+
+function firstError(errors: unknown[]) {
+  return errors.find(
+    (error): error is string => typeof error === 'string' && error.length > 0,
   )
 }

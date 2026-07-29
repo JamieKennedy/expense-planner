@@ -25,7 +25,35 @@ public sealed class IdentityModule(
     SigningCredentials signingCredentials,
     IOptions<JwtOptions> options) : IIdentityModule, IIdentityAdministration
 {
+    private const long FirstOwnerRegistrationLock = 2_307_202_026;
+    private const long SetupPreparationLock = 2_907_202_026;
     private readonly JwtOptions _options = options.Value;
+
+    public async Task<bool> IsRegistrationOpenAsync(CancellationToken cancellationToken) =>
+        !await userManager.Users.AnyAsync(cancellationToken);
+
+    public async Task<FirstOwnerRegistrationResult> RegisterFirstOwnerAsync(
+        string email,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({FirstOwnerRegistrationLock})",
+            cancellationToken);
+
+        if (await userManager.Users.AnyAsync(cancellationToken))
+        {
+            throw new ConflictException("First-run registration is closed.");
+        }
+
+        var user = await CreatePendingUserAsync(email, cancellationToken);
+        var setupCode = await CreateSetupTokenAsync(
+            user.Id,
+            "registration",
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new FirstOwnerRegistrationResult(setupCode);
+    }
 
     public async Task<PasswordLoginResult> CheckPasswordAsync(
         string email,
@@ -45,13 +73,21 @@ public sealed class IdentityModule(
         }
 
         await userManager.ResetAccessFailedCountAsync(user);
+        if (!user.TwoFactorEnabled)
+        {
+            return new PasswordLoginResult(
+                false,
+                null,
+                await IssueTokensAsync(user, null, cancellationToken));
+        }
+
         var challengeId = RandomToken();
         await cache.SetStringAsync(
             $"mfa:{Hash(challengeId)}",
             JsonSerializer.Serialize(new MfaChallenge(user.Id, DateTimeOffset.UtcNow.AddMinutes(5))),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) },
             cancellationToken);
-        return new PasswordLoginResult(true, challengeId);
+        return new PasswordLoginResult(true, challengeId, null);
     }
 
     public async Task<TokenPair> VerifyMfaAsync(
@@ -89,6 +125,123 @@ public sealed class IdentityModule(
 
         await cache.RemoveAsync(key, cancellationToken);
         return await IssueTokensAsync(user, null, cancellationToken);
+    }
+
+    public async Task<SecurityStatus> GetSecurityStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        var user = await CurrentUserAsync(cancellationToken);
+        return new SecurityStatus(user.TwoFactorEnabled);
+    }
+
+    public async Task<MfaEnrollmentResult> PrepareMfaEnrollmentAsync(
+        string password,
+        CancellationToken cancellationToken)
+    {
+        var user = await CurrentUserAsync(cancellationToken);
+        await VerifyCurrentPasswordAsync(user, password);
+        if (user.TwoFactorEnabled)
+        {
+            throw new ConflictException("Multi-factor authentication is already enabled.");
+        }
+
+        var reset = await userManager.ResetAuthenticatorKeyAsync(user);
+        if (!reset.Succeeded)
+        {
+            throw new ConflictException(Errors(reset));
+        }
+
+        var details = await AuthenticatorDetailsAsync(user);
+        var challengeId = RandomToken();
+        await cache.SetStringAsync(
+            $"mfa-enrollment:{Hash(challengeId)}",
+            JsonSerializer.Serialize(
+                new MfaChallenge(user.Id, DateTimeOffset.UtcNow.AddMinutes(10))),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10),
+            },
+            cancellationToken);
+        return new MfaEnrollmentResult(
+            challengeId,
+            details.SharedKey,
+            details.AuthenticatorUri);
+    }
+
+    public async Task<MfaChangeResult> EnableMfaAsync(
+        string challengeId,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        var key = $"mfa-enrollment:{Hash(challengeId)}";
+        var serialized = await cache.GetStringAsync(key, cancellationToken);
+        var challenge = serialized is null
+            ? null
+            : JsonSerializer.Deserialize<MfaChallenge>(serialized);
+        if (challenge is null ||
+            challenge.ExpiresAtUtc <= DateTimeOffset.UtcNow ||
+            challenge.UserId != plannerContext.UserId)
+        {
+            throw new ForbiddenException("The MFA enrollment challenge is invalid or expired.");
+        }
+
+        var user = await CurrentUserAsync(cancellationToken);
+        if (user.TwoFactorEnabled)
+        {
+            throw new ConflictException("Multi-factor authentication is already enabled.");
+        }
+
+        if (!await VerifyAuthenticatorCodeAsync(user, code))
+        {
+            throw new ForbiddenException("The authenticator code is invalid.");
+        }
+
+        user.TwoFactorEnabled = true;
+        var update = await userManager.UpdateAsync(user);
+        if (!update.Succeeded)
+        {
+            throw new ConflictException(Errors(update));
+        }
+
+        var recoveryCodes =
+            (await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10))?.ToArray() ?? [];
+        await cache.RemoveAsync(key, cancellationToken);
+        await RevokeAllAsync(user.Id, cancellationToken);
+        return new MfaChangeResult(recoveryCodes);
+    }
+
+    public async Task DisableMfaAsync(
+        string password,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        var user = await CurrentUserAsync(cancellationToken);
+        await VerifyCurrentPasswordAsync(user, password);
+        if (!user.TwoFactorEnabled)
+        {
+            throw new ConflictException("Multi-factor authentication is already disabled.");
+        }
+
+        var valid = await VerifyAuthenticatorCodeAsync(user, code);
+        if (!valid)
+        {
+            valid = (await userManager.RedeemTwoFactorRecoveryCodeAsync(user, code)).Succeeded;
+        }
+
+        if (!valid)
+        {
+            throw new ForbiddenException("The authenticator or recovery code is invalid.");
+        }
+
+        user.TwoFactorEnabled = false;
+        var update = await userManager.UpdateAsync(user);
+        if (!update.Succeeded)
+        {
+            throw new ConflictException(Errors(update));
+        }
+
+        await ClearAuthenticatorAsync(user);
+        await RevokeAllAsync(user.Id, cancellationToken);
     }
 
     public async Task<TokenPair> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
@@ -161,20 +314,25 @@ public sealed class IdentityModule(
         string code,
         CancellationToken cancellationToken)
     {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({SetupPreparationLock})",
+            cancellationToken);
+
         var user = await ResolveSetupUserAsync(code, cancellationToken);
-        await userManager.ResetAuthenticatorKeyAsync(user);
-        var sharedKey = await userManager.GetAuthenticatorKeyAsync(user)
-            ?? throw new InvalidOperationException("Unable to create an authenticator key.");
-        var issuer = UrlEncoder.Default.Encode("Expense Planner");
-        var account = UrlEncoder.Default.Encode(user.Email ?? user.UserName ?? user.Id.ToString());
-        var uri = $"otpauth://totp/{issuer}:{account}?secret={sharedKey}&issuer={issuer}&digits=6";
-        return new MfaSetupResult(user.Email!, sharedKey, uri);
+        var details = await AuthenticatorDetailsAsync(user);
+        await transaction.CommitAsync(cancellationToken);
+        return new MfaSetupResult(
+            user.Email!,
+            details.SharedKey,
+            details.AuthenticatorUri);
     }
 
     public async Task<SetupCompletionResult> CompleteSetupAsync(
         string code,
         string password,
-        string totpCode,
+        bool enableMfa,
+        string? totpCode,
         CancellationToken cancellationToken)
     {
         var user = await ResolveSetupUserAsync(code, cancellationToken);
@@ -194,33 +352,41 @@ public sealed class IdentityModule(
             throw new ConflictException(Errors(passwordResult));
         }
 
-        if (!await userManager.VerifyTwoFactorTokenAsync(
-                user,
-                TokenOptions.DefaultAuthenticatorProvider,
-                totpCode.Replace(" ", string.Empty, StringComparison.Ordinal)))
+        if (enableMfa &&
+            (string.IsNullOrWhiteSpace(totpCode) ||
+             !await VerifyAuthenticatorCodeAsync(user, totpCode)))
         {
             await userManager.RemovePasswordAsync(user);
             throw new ForbiddenException("The authenticator code is invalid.");
         }
 
         user.SetupComplete = true;
-        user.TwoFactorEnabled = true;
-        await userManager.UpdateAsync(user);
-        var recoveryCodes = (await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10))?.ToArray() ?? [];
-        await MarkSetupCodeUsedAsync(code, cancellationToken);
-        var tokens = await IssueTokensAsync(user, null, cancellationToken);
-        return new SetupCompletionResult(user.Email!, recoveryCodes, tokens);
-    }
-
-    public async Task<string> BootstrapUserAsync(string email, CancellationToken cancellationToken)
-    {
-        if (await userManager.Users.AnyAsync(cancellationToken))
+        user.TwoFactorEnabled = enableMfa;
+        var update = await userManager.UpdateAsync(user);
+        if (!update.Succeeded)
         {
-            throw new ConflictException("Bootstrap is allowed only while no users exist.");
+            throw new ConflictException(Errors(update));
         }
 
-        var user = await CreatePendingUserAsync(email, cancellationToken);
-        return await CreateSetupTokenAsync(user.Id, "bootstrap", cancellationToken);
+        IReadOnlyCollection<string> recoveryCodes;
+        if (enableMfa)
+        {
+            recoveryCodes =
+                (await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10))?.ToArray() ?? [];
+        }
+        else
+        {
+            await ClearAuthenticatorAsync(user);
+            recoveryCodes = [];
+        }
+
+        await MarkSetupCodeUsedAsync(code, cancellationToken);
+        var tokens = await IssueTokensAsync(user, null, cancellationToken);
+        return new SetupCompletionResult(
+            user.Email!,
+            enableMfa,
+            recoveryCodes,
+            tokens);
     }
 
     public async Task<string> ResetUserAsync(string email, CancellationToken cancellationToken)
@@ -230,9 +396,77 @@ public sealed class IdentityModule(
         user.SetupComplete = false;
         user.TwoFactorEnabled = false;
         await userManager.UpdateAsync(user);
-        await userManager.ResetAuthenticatorKeyAsync(user);
+        await ClearAuthenticatorAsync(user);
         await RevokeAllAsync(user.Id, cancellationToken);
         return await CreateSetupTokenAsync(user.Id, "reset", cancellationToken);
+    }
+
+    private async Task<ApplicationUser> CurrentUserAsync(
+        CancellationToken cancellationToken) =>
+        await userManager.Users.SingleOrDefaultAsync(
+            user => user.Id == plannerContext.UserId && user.SetupComplete,
+            cancellationToken)
+        ?? throw new NotFoundException("The current user was not found.");
+
+    private async Task VerifyCurrentPasswordAsync(
+        ApplicationUser user,
+        string password)
+    {
+        if (await userManager.IsLockedOutAsync(user) ||
+            !await userManager.CheckPasswordAsync(user, password))
+        {
+            await userManager.AccessFailedAsync(user);
+            throw new ForbiddenException("The current password is incorrect.");
+        }
+
+        await userManager.ResetAccessFailedCountAsync(user);
+    }
+
+    private Task<bool> VerifyAuthenticatorCodeAsync(
+        ApplicationUser user,
+        string code) =>
+        userManager.VerifyTwoFactorTokenAsync(
+            user,
+            TokenOptions.DefaultAuthenticatorProvider,
+            code.Replace(" ", string.Empty, StringComparison.Ordinal));
+
+    private async Task ClearAuthenticatorAsync(ApplicationUser user)
+    {
+        var reset = await userManager.ResetAuthenticatorKeyAsync(user);
+        if (!reset.Succeeded)
+        {
+            throw new ConflictException(Errors(reset));
+        }
+
+        await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+    }
+
+    private async Task<AuthenticatorDetails> AuthenticatorDetailsAsync(
+        ApplicationUser user)
+    {
+        var sharedKey = await userManager.GetAuthenticatorKeyAsync(user);
+        if (string.IsNullOrWhiteSpace(sharedKey))
+        {
+            var reset = await userManager.ResetAuthenticatorKeyAsync(user);
+            if (!reset.Succeeded)
+            {
+                throw new ConflictException(Errors(reset));
+            }
+
+            sharedKey = await userManager.GetAuthenticatorKeyAsync(user);
+        }
+
+        if (string.IsNullOrWhiteSpace(sharedKey))
+        {
+            throw new InvalidOperationException("Unable to create an authenticator key.");
+        }
+
+        var issuer = UrlEncoder.Default.Encode("Expense Planner");
+        var account = UrlEncoder.Default.Encode(
+            user.Email ?? user.UserName ?? user.Id.ToString());
+        return new AuthenticatorDetails(
+            sharedKey,
+            $"otpauth://totp/{issuer}:{account}?secret={sharedKey}&issuer={issuer}&digits=6");
     }
 
     private async Task<ApplicationUser> ResolveSetupUserAsync(
@@ -277,7 +511,7 @@ public sealed class IdentityModule(
 
         var plannerId = Guid.NewGuid();
         dbContext.Planners.Add(new Planner(plannerId, $"{normalized}'s planner"));
-        dbContext.Contributors.Add(new Contributor(plannerId, "Me"));
+        dbContext.Contributors.Add(new Contributor(plannerId, "Me", isOwner: true));
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var user = new ApplicationUser
@@ -422,4 +656,7 @@ public sealed class IdentityModule(
         string.Join(" ", result.Errors.Select(error => error.Description));
 
     private sealed record MfaChallenge(Guid UserId, DateTimeOffset ExpiresAtUtc);
+    private sealed record AuthenticatorDetails(
+        string SharedKey,
+        string AuthenticatorUri);
 }

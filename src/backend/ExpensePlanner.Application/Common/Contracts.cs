@@ -10,7 +10,8 @@ public sealed record ReferenceItemDto(
     Guid Id,
     string Name,
     bool IsArchived,
-    string? Colour = null);
+    string? Colour = null,
+    bool IsOwner = false);
 
 public sealed class NotFoundException(string message) : Exception(message);
 

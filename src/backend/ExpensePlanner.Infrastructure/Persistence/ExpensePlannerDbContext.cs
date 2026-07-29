@@ -42,6 +42,10 @@ public sealed class ExpensePlannerDbContext(
 
         ConfigureReference(builder.Entity<Account>(), "Accounts");
         ConfigureReference(builder.Entity<Contributor>(), "Contributors");
+        builder.Entity<Contributor>()
+            .HasIndex(item => new { item.PlannerId, item.IsOwner })
+            .IsUnique()
+            .HasFilter("\"IsOwner\" = TRUE");
         ConfigureReference(builder.Entity<Tag>(), "Tags");
         builder.Entity<Tag>().Property(item => item.Colour).HasMaxLength(7);
 

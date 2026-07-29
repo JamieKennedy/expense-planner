@@ -165,6 +165,9 @@ namespace ExpensePlanner.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsArchived")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsOwner")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -179,6 +182,10 @@ namespace ExpensePlanner.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PlannerId");
+
+                    b.HasIndex("PlannerId", "IsOwner")
+                        .IsUnique()
+                        .HasFilter("\"IsOwner\" = TRUE");
 
                     b.HasIndex("PlannerId", "Name")
                         .IsUnique()
@@ -202,7 +209,10 @@ namespace ExpensePlanner.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("DayOfMonth")
+                    b.Property<int?>("DayOfMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Frequency")
                         .HasColumnType("integer");
 
                     b.Property<bool>("MoveToNextWorkingDay")
@@ -215,6 +225,9 @@ namespace ExpensePlanner.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid>("PlannerId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateOnly?>("ScheduleAnchorDate")
+                        .HasColumnType("date");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");

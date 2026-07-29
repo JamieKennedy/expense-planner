@@ -11,8 +11,28 @@ namespace ExpensePlanner.Api.Controllers;
 [Route("api/auth")]
 public sealed class AuthController(
     IIdentityModule identityModule,
-    IPlannerContext plannerContext) : ControllerBase
+    IPlannerContext plannerContext,
+    IWebHostEnvironment environment) : ControllerBase
 {
+    [AllowAnonymous]
+    [HttpGet("registration")]
+    public async Task<RegistrationAvailabilityResponse> RegistrationAvailability(
+        CancellationToken cancellationToken) =>
+        new(await identityModule.IsRegistrationOpenAsync(cancellationToken));
+
+    [AllowAnonymous]
+    [EnableRateLimiting("login")]
+    [HttpPost("registration")]
+    public async Task<FirstOwnerRegistrationResponse> RegisterFirstOwner(
+        FirstOwnerRegistrationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await identityModule.RegisterFirstOwnerAsync(
+            request.Email,
+            cancellationToken);
+        return new FirstOwnerRegistrationResponse(result.SetupCode);
+    }
+
     [HttpGet("session")]
     public ActionResult<SessionResponse> Session() =>
         new SessionResponse(
@@ -23,10 +43,21 @@ public sealed class AuthController(
     [AllowAnonymous]
     [EnableRateLimiting("login")]
     [HttpPost("login")]
-    public Task<PasswordLoginResult> Login(
+    public async Task<LoginResponse> Login(
         LoginRequest request,
-        CancellationToken cancellationToken) =>
-        identityModule.CheckPasswordAsync(request.Email, request.Password, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var result = await identityModule.CheckPasswordAsync(
+            request.Email,
+            request.Password,
+            cancellationToken);
+        if (result.Tokens is not null)
+        {
+            SetCookies(result.Tokens);
+        }
+
+        return new LoginResponse(result.RequiresMfa, result.ChallengeId);
+    }
 
     [AllowAnonymous]
     [EnableRateLimiting("login")]
@@ -46,7 +77,7 @@ public sealed class AuthController(
     [HttpPost("refresh")]
     public async Task<ActionResult> Refresh(CancellationToken cancellationToken)
     {
-        var refresh = Request.Cookies[AuthCookies.RefreshToken]
+        var refresh = Request.Cookies[AuthCookies.RefreshToken(SecureCookies)]
             ?? throw new Application.Common.ForbiddenException("The refresh cookie is missing.");
         SetCookies(await identityModule.RefreshAsync(refresh, cancellationToken));
         return NoContent();
@@ -55,7 +86,9 @@ public sealed class AuthController(
     [HttpPost("logout")]
     public async Task<ActionResult> Logout(CancellationToken cancellationToken)
     {
-        await identityModule.RevokeAsync(Request.Cookies[AuthCookies.RefreshToken], cancellationToken);
+        await identityModule.RevokeAsync(
+            Request.Cookies[AuthCookies.RefreshToken(SecureCookies)],
+            cancellationToken);
         DeleteCookies();
         return NoContent();
     }
@@ -82,16 +115,62 @@ public sealed class AuthController(
         var completed = await identityModule.CompleteSetupAsync(
             request.Code,
             request.Password,
+            request.EnableMfa ?? true,
             request.TotpCode,
             cancellationToken);
         SetCookies(completed.Tokens);
-        return new SetupCompletionResponse(completed.Email, completed.RecoveryCodes);
+        return new SetupCompletionResponse(
+            completed.Email,
+            completed.MfaEnabled,
+            completed.RecoveryCodes);
+    }
+
+    [HttpGet("security")]
+    public Task<SecurityStatus> SecurityStatus(
+        CancellationToken cancellationToken) =>
+        identityModule.GetSecurityStatusAsync(cancellationToken);
+
+    [EnableRateLimiting("login")]
+    [HttpPost("security/mfa/prepare")]
+    public Task<MfaEnrollmentResult> PrepareMfaEnrollment(
+        PrepareMfaEnrollmentRequest request,
+        CancellationToken cancellationToken) =>
+        identityModule.PrepareMfaEnrollmentAsync(
+            request.Password,
+            cancellationToken);
+
+    [EnableRateLimiting("login")]
+    [HttpPost("security/mfa/enable")]
+    public async Task<MfaChangeResponse> EnableMfa(
+        EnableMfaRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await identityModule.EnableMfaAsync(
+            request.ChallengeId,
+            request.Code,
+            cancellationToken);
+        DeleteCookies();
+        return new MfaChangeResponse(true, result.RecoveryCodes);
+    }
+
+    [EnableRateLimiting("login")]
+    [HttpPost("security/mfa/disable")]
+    public async Task<MfaChangeResponse> DisableMfa(
+        DisableMfaRequest request,
+        CancellationToken cancellationToken)
+    {
+        await identityModule.DisableMfaAsync(
+            request.Password,
+            request.Code,
+            cancellationToken);
+        DeleteCookies();
+        return new MfaChangeResponse(false, []);
     }
 
     private void SetCookies(TokenPair tokens)
     {
-        var secure = !HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
-        Response.Cookies.Append(AuthCookies.AccessToken, tokens.AccessToken, new CookieOptions
+        var secure = SecureCookies;
+        Response.Cookies.Append(AuthCookies.AccessToken(secure), tokens.AccessToken, new CookieOptions
         {
             HttpOnly = true,
             Secure = secure,
@@ -99,7 +178,7 @@ public sealed class AuthController(
             Path = "/",
             Expires = tokens.AccessTokenExpiresAt,
         });
-        Response.Cookies.Append(AuthCookies.RefreshToken, tokens.RefreshToken, new CookieOptions
+        Response.Cookies.Append(AuthCookies.RefreshToken(secure), tokens.RefreshToken, new CookieOptions
         {
             HttpOnly = true,
             Secure = secure,
@@ -119,16 +198,41 @@ public sealed class AuthController(
 
     private void DeleteCookies()
     {
-        Response.Cookies.Delete(AuthCookies.AccessToken, new CookieOptions { Path = "/" });
-        Response.Cookies.Delete(AuthCookies.RefreshToken, new CookieOptions { Path = "/api/auth" });
+        Response.Cookies.Delete(
+            AuthCookies.AccessToken(SecureCookies),
+            new CookieOptions { Path = "/" });
+        Response.Cookies.Delete(
+            AuthCookies.RefreshToken(SecureCookies),
+            new CookieOptions { Path = "/api/auth" });
         Response.Cookies.Delete(AuthCookies.CsrfToken, new CookieOptions { Path = "/" });
     }
+
+    private bool SecureCookies => !environment.IsDevelopment();
 }
 
 public sealed record LoginRequest(string Email, string Password);
+public sealed record LoginResponse(bool RequiresMfa, string? ChallengeId);
+public sealed record RegistrationAvailabilityResponse(bool Available);
+public sealed record FirstOwnerRegistrationRequest(string Email);
+public sealed record FirstOwnerRegistrationResponse(string SetupCode);
 public sealed record MfaRequest(string ChallengeId, string Code);
 public sealed record InvitationRequest(string Email);
 public sealed record SetupCodeRequest(string Code);
-public sealed record CompleteSetupRequest(string Code, string Password, string TotpCode);
-public sealed record SetupCompletionResponse(string Email, IReadOnlyCollection<string> RecoveryCodes);
+public sealed class CompleteSetupRequest
+{
+    public required string Code { get; init; }
+    public required string Password { get; init; }
+    public bool? EnableMfa { get; init; }
+    public string? TotpCode { get; init; }
+}
+public sealed record SetupCompletionResponse(
+    string Email,
+    bool MfaEnabled,
+    IReadOnlyCollection<string> RecoveryCodes);
+public sealed record PrepareMfaEnrollmentRequest(string Password);
+public sealed record EnableMfaRequest(string ChallengeId, string Code);
+public sealed record DisableMfaRequest(string Password, string Code);
+public sealed record MfaChangeResponse(
+    bool MfaEnabled,
+    IReadOnlyCollection<string> RecoveryCodes);
 public sealed record SessionResponse(Guid UserId, Guid PlannerId, string Email);

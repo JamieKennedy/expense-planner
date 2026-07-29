@@ -18,6 +18,7 @@ public sealed record MonthlyOverviewDto(
     long ProjectedExpensesPence,
     long ProjectedNetPence,
     IReadOnlyCollection<NamedAmountDto> ContributorCosts,
+    IReadOnlyCollection<NamedAmountDto> AccountCosts,
     IReadOnlyCollection<NamedAmountDto> TagCosts,
     IReadOnlyCollection<BudgetLineOverviewDto> BudgetLines,
     IReadOnlyCollection<NamedAmountDto> BudgetContributions);
@@ -36,15 +37,25 @@ public sealed class MonthlyOverviewModule(
     IPlannerContext plannerContext,
     IPlannerCache cache) : IMonthlyOverviewModule
 {
-    public Task<MonthlyOverviewDto> GetAsync(string month, CancellationToken cancellationToken) =>
+    public Task<MonthlyOverviewDto> GetAsync(
+        string month,
+        CancellationToken cancellationToken)
+    {
+        var (year, monthNumber) = ParseMonth(month);
+        return
         cache.GetOrCreateAsync(
             plannerContext.PlannerId,
-            $"monthly-overview:{month}",
+            $"monthly-overview-v3:{month}",
             TimeSpan.FromMinutes(5),
-            token => CalculateAsync(month, token),
+            token => CalculateAsync(month, year, monthNumber, token),
             cancellationToken);
+    }
 
-    private async Task<MonthlyOverviewDto> CalculateAsync(string month, CancellationToken cancellationToken)
+    private async Task<MonthlyOverviewDto> CalculateAsync(
+        string month,
+        int year,
+        int monthNumber,
+        CancellationToken cancellationToken)
     {
         var plannerId = plannerContext.PlannerId;
         var expenses = await dbContext.Expenses.AsNoTracking()
@@ -61,19 +72,29 @@ public sealed class MonthlyOverviewModule(
         var contributors = await dbContext.Contributors.AsNoTracking()
             .Where(contributor => contributor.PlannerId == plannerId)
             .ToArrayAsync(cancellationToken);
+        var accounts = await dbContext.Accounts.AsNoTracking()
+            .Where(account => account.PlannerId == plannerId)
+            .ToArrayAsync(cancellationToken);
         var budget = await dbContext.BudgetTemplates.AsNoTracking()
             .Include(item => item.Lines)
             .ThenInclude(line => line.ContributorShares)
             .SingleOrDefaultAsync(item => item.PlannerId == plannerId, cancellationToken);
 
         var result = MonthlyOverviewCalculator.Calculate(new MonthlyOverviewInput(
-            month,
-            expenses.Select(expense => new ExpenseOverviewInput(
-                expense.Id,
-                expense.AmountPence,
-                expense.Tags.Select(tag => tag.TagId).ToArray(),
-                expense.ContributorShares.Select(share =>
-                    new ContributorShareValue(share.ContributorId, share.BasisPoints)).ToArray())).ToArray(),
+            expenses.SelectMany(expense =>
+                ExpenseSchedule.ProjectNominalDates(
+                        expense.Schedule,
+                        year,
+                        monthNumber)
+                    .Select(_ => new ExpenseOverviewInput(
+                        expense.Id,
+                        expense.AmountPence,
+                        expense.AccountId,
+                        expense.Tags.Select(tag => tag.TagId).ToArray(),
+                        expense.ContributorShares.Select(share =>
+                            new ContributorShareValue(
+                                share.ContributorId,
+                                share.BasisPoints)).ToArray()))).ToArray(),
             income.Select(item => new IncomeOverviewInput(item.Id, item.AmountPence)).ToArray(),
             tags.Select(tag => new TagOverviewInput(tag.Id, tag.Name)).ToArray(),
             budget?.Lines.Select(line => new BudgetLineOverviewInput(
@@ -85,14 +106,22 @@ public sealed class MonthlyOverviewModule(
                     new ContributorShareValue(share.ContributorId, share.BasisPoints)).ToArray())).ToArray() ?? []));
 
         var contributorNames = contributors.ToDictionary(item => item.Id, item => item.Name);
+        var accountNames = accounts.ToDictionary(item => item.Id, item => item.Name);
         var tagNames = tags.ToDictionary(item => item.Id, item => item.Name);
         return new MonthlyOverviewDto(
-            result.Month,
+            month,
             result.ProjectedIncomePence,
             result.ProjectedExpensesPence,
             result.ProjectedNetPence,
             result.ContributorCostsPence.Select(item =>
                 new NamedAmountDto(item.Key, contributorNames.GetValueOrDefault(item.Key, "Archived"), item.Value))
+                .OrderByDescending(item => item.AmountPence)
+                .ToArray(),
+            result.AccountCostsPence.Select(item =>
+                new NamedAmountDto(
+                    item.Key,
+                    accountNames.GetValueOrDefault(item.Key, "Archived account"),
+                    item.Value))
                 .OrderByDescending(item => item.AmountPence)
                 .ToArray(),
             result.TagCostsPence.Select(item =>
@@ -111,5 +140,20 @@ public sealed class MonthlyOverviewModule(
                 new NamedAmountDto(item.Key, contributorNames.GetValueOrDefault(item.Key, "Archived"), item.Value))
                 .OrderByDescending(item => item.AmountPence)
                 .ToArray());
+    }
+
+    private static (int Year, int Month) ParseMonth(string value)
+    {
+        if (!DateOnly.TryParseExact(
+                $"{value}-01",
+                "yyyy-MM-dd",
+                null,
+                System.Globalization.DateTimeStyles.None,
+                out var parsed))
+        {
+            throw new ArgumentException("Month must use YYYY-MM format.", nameof(value));
+        }
+
+        return (parsed.Year, parsed.Month);
     }
 }

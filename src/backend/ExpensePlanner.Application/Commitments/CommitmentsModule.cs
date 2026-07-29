@@ -1,5 +1,6 @@
 using ExpensePlanner.Application.Abstractions;
 using ExpensePlanner.Application.Common;
+using ExpensePlanner.Domain.Common;
 using ExpensePlanner.Domain.Planning;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,7 +8,7 @@ namespace ExpensePlanner.Application.Commitments;
 
 public interface ICommitmentsModule
 {
-    Task<PagedResult<ExpenseDto>> GetExpensesAsync(ExpenseQuery query, CancellationToken cancellationToken);
+    Task<ExpensePageDto> GetExpensesAsync(ExpenseQuery query, CancellationToken cancellationToken);
     Task<ExpenseDto> SaveExpenseAsync(Guid? id, SaveExpenseRequest request, CancellationToken cancellationToken);
     Task DeleteExpenseAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<IncomeItemDto>> GetIncomeItemsAsync(string month, CancellationToken cancellationToken);
@@ -23,7 +24,9 @@ public sealed record SaveExpenseRequest(
     string Name,
     long AmountPence,
     Guid AccountId,
-    int DayOfMonth,
+    string? Frequency,
+    DateOnly? ScheduleAnchorDate,
+    int? DayOfMonth,
     bool MoveToNextWorkingDay,
     IReadOnlyCollection<Guid> TagIds,
     IReadOnlyCollection<ContributorShareDto> ContributorShares);
@@ -32,13 +35,24 @@ public sealed record ExpenseDto(
     Guid Id,
     string Name,
     long AmountPence,
+    long AttributedAmountPence,
     Guid AccountId,
     string AccountName,
-    int DayOfMonth,
+    string? Frequency,
+    DateOnly? ScheduleAnchorDate,
+    int? DayOfMonth,
+    DateOnly NominalDate,
     DateOnly DueDate,
     bool MoveToNextWorkingDay,
     IReadOnlyCollection<Guid> TagIds,
     IReadOnlyCollection<ContributorShareDto> ContributorShares);
+
+public sealed record ExpensePageDto(
+    IReadOnlyCollection<ExpenseDto> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    long TotalAmountPence);
 
 public sealed record ExpenseQuery(
     string Month,
@@ -91,7 +105,7 @@ public sealed class CommitmentsModule(
     IWorkingDayCalendar workingDayCalendar,
     IPlannerCache cache) : ICommitmentsModule
 {
-    public async Task<PagedResult<ExpenseDto>> GetExpensesAsync(
+    public async Task<ExpensePageDto> GetExpensesAsync(
         ExpenseQuery query,
         CancellationToken cancellationToken)
     {
@@ -125,35 +139,48 @@ public sealed class CommitmentsModule(
             expenses = expenses.Where(expense => expense.Name.Contains(search));
         }
 
-        var total = await expenses.CountAsync(cancellationToken);
         var materialized = await expenses.ToArrayAsync(cancellationToken);
         var accountNames = await dbContext.Accounts.AsNoTracking()
             .Where(account => account.PlannerId == plannerId)
             .ToDictionaryAsync(account => account.Id, account => account.Name, cancellationToken);
-        var holidays = await workingDayCalendar.GetHolidaysAsync(year, year + 1, cancellationToken);
+        var holidays = materialized.Any(expense => expense.MoveToNextWorkingDay)
+            ? await workingDayCalendar.GetHolidaysAsync(year, year + 1, cancellationToken)
+            : new HashSet<DateOnly>();
 
-        var mapped = materialized.Select(expense => MapExpense(expense, year, month, holidays, accountNames))
-            .AsEnumerable();
-        mapped = query.Sort switch
+        var attributedContributors = query.ContributorIds is { Count: > 0 }
+            ? query.ContributorIds.ToHashSet()
+            : null;
+        var mapped = materialized.SelectMany(expense =>
+                ExpenseSchedule.Project(expense.Schedule, year, month, holidays)
+                    .Select(occurrence => MapExpense(
+                        expense,
+                        occurrence,
+                        accountNames,
+                        attributedContributors)))
+            .ToArray();
+        var totalAmountPence = mapped.Sum(expense => expense.AttributedAmountPence);
+        var sorted = mapped.AsEnumerable();
+        sorted = query.Sort switch
         {
             "name" => query.Descending
-                ? mapped.OrderByDescending(expense => expense.Name)
-                : mapped.OrderBy(expense => expense.Name),
+                ? sorted.OrderByDescending(expense => expense.Name)
+                : sorted.OrderBy(expense => expense.Name),
             "amount" => query.Descending
-                ? mapped.OrderByDescending(expense => expense.AmountPence)
-                : mapped.OrderBy(expense => expense.AmountPence),
+                ? sorted.OrderByDescending(expense => expense.AttributedAmountPence)
+                : sorted.OrderBy(expense => expense.AttributedAmountPence),
             _ => query.Descending
-                ? mapped.OrderByDescending(expense => expense.DueDate)
-                : mapped.OrderBy(expense => expense.DueDate),
+                ? sorted.OrderByDescending(expense => expense.DueDate)
+                : sorted.OrderBy(expense => expense.DueDate),
         };
 
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
-        return new PagedResult<ExpenseDto>(
-            mapped.Skip((page - 1) * pageSize).Take(pageSize).ToArray(),
+        return new ExpensePageDto(
+            sorted.Skip((page - 1) * pageSize).Take(pageSize).ToArray(),
             page,
             pageSize,
-            total);
+            mapped.Length,
+            totalAmountPence);
     }
 
     public async Task<ExpenseDto> SaveExpenseAsync(
@@ -161,6 +188,15 @@ public sealed class CommitmentsModule(
         SaveExpenseRequest request,
         CancellationToken cancellationToken)
     {
+        var schedule = Schedule(request);
+        if (id is null &&
+            schedule.Frequency == ExpenseFrequency.Monthly &&
+            schedule.ScheduleAnchorDate is null)
+        {
+            throw new DomainValidationException(
+                "A new monthly expense requires a starting month.");
+        }
+
         await ValidateReferencesAsync(
             request.AccountId,
             request.TagIds,
@@ -175,8 +211,7 @@ public sealed class CommitmentsModule(
                 request.Name,
                 request.AmountPence,
                 request.AccountId,
-                request.DayOfMonth,
-                request.MoveToNextWorkingDay,
+                schedule,
                 request.TagIds,
                 Shares(request.ContributorShares));
             dbContext.Expenses.Add(expense);
@@ -189,25 +224,43 @@ public sealed class CommitmentsModule(
                 .SingleOrDefaultAsync(
                     item => item.Id == id && item.PlannerId == plannerContext.PlannerId,
                     cancellationToken) ?? throw new NotFoundException("The expense was not found.");
+            if (schedule.Frequency == ExpenseFrequency.Monthly &&
+                schedule.ScheduleAnchorDate is null &&
+                (expense.Frequency != ExpenseFrequency.Monthly ||
+                 expense.ScheduleAnchorDate is not null))
+            {
+                throw new DomainValidationException(
+                    "Only a migrated historically active monthly expense can retain an empty starting month.");
+            }
+
             expense.Update(
                 request.Name,
                 request.AmountPence,
                 request.AccountId,
-                request.DayOfMonth,
-                request.MoveToNextWorkingDay,
+                schedule,
                 request.TagIds,
                 Shares(request.ContributorShares));
         }
 
         await SaveAndInvalidateAsync(cancellationToken);
-        var now = DateTimeOffset.UtcNow;
-        var holidays = await workingDayCalendar.GetHolidaysAsync(now.Year, now.Year + 1, cancellationToken);
+        var nominalDate = ResponseNominalDate(expense.Schedule);
+        var holidays = expense.MoveToNextWorkingDay
+            ? await workingDayCalendar.GetHolidaysAsync(
+                nominalDate.Year,
+                nominalDate.Year + 1,
+                cancellationToken)
+            : new HashSet<DateOnly>();
         var account = await dbContext.Accounts.AsNoTracking()
             .SingleAsync(item => item.Id == expense.AccountId, cancellationToken);
-        return MapExpense(expense, now.Year, now.Month, holidays, new Dictionary<Guid, string>
-        {
-            [account.Id] = account.Name,
-        });
+        var occurrence = new ExpenseOccurrence(
+            nominalDate,
+            expense.MoveToNextWorkingDay
+                ? MonthlySchedule.AdvanceToWorkingDay(nominalDate, holidays)
+                : nominalDate);
+        return MapExpense(
+            expense,
+            occurrence,
+            new Dictionary<Guid, string> { [account.Id] = account.Name });
     }
 
     public async Task DeleteExpenseAsync(Guid id, CancellationToken cancellationToken)
@@ -331,17 +384,32 @@ public sealed class CommitmentsModule(
             .Include(item => item.Lines)
             .ThenInclude(line => line.ContributorShares)
             .SingleOrDefaultAsync(item => item.PlannerId == plannerContext.PlannerId, cancellationToken);
+        var isNew = budget is null;
         if (budget is null)
         {
             budget = new BudgetTemplate(plannerContext.PlannerId);
-            dbContext.BudgetTemplates.Add(budget);
         }
 
+        var previousLines = budget.Lines.ToArray();
         budget.ReplaceLines(request.Lines.Select(line => new BudgetLineValue(
             line.Name,
             line.AllowancePence,
             line.TagId,
             Shares(line.ContributorShares))));
+        if (isNew)
+        {
+            dbContext.BudgetTemplates.Add(budget);
+        }
+        else
+        {
+            var currentIds = budget.Lines.Select(line => line.Id).ToHashSet();
+            var previousIds = previousLines.Select(line => line.Id).ToHashSet();
+            dbContext.BudgetLines.RemoveRange(
+                previousLines.Where(line => !currentIds.Contains(line.Id)));
+            dbContext.BudgetLines.AddRange(
+                budget.Lines.Where(line => !previousIds.Contains(line.Id)));
+        }
+
         await SaveAndInvalidateAsync(cancellationToken);
         return MapBudget(budget);
     }
@@ -383,34 +451,80 @@ public sealed class CommitmentsModule(
 
     private static ExpenseDto MapExpense(
         Expense expense,
-        int year,
-        int month,
-        IReadOnlySet<DateOnly> holidays,
-        IReadOnlyDictionary<Guid, string> accountNames)
+        ExpenseOccurrence occurrence,
+        IReadOnlyDictionary<Guid, string> accountNames,
+        HashSet<Guid>? attributedContributors = null)
     {
         var shares = expense.ContributorShares
             .Select(share => new ContributorShareValue(share.ContributorId, share.BasisPoints))
             .ToArray();
         var allocations = ContributorSplit.AllocatePence(expense.AmountPence, shares);
+        var attributedAmountPence = attributedContributors is { Count: > 0 }
+            ? allocations
+                .Where(allocation => attributedContributors.Contains(allocation.Key))
+                .Sum(allocation => allocation.Value)
+            : expense.AmountPence;
         return new ExpenseDto(
             expense.Id,
             expense.Name,
             expense.AmountPence,
+            attributedAmountPence,
             expense.AccountId,
             accountNames.GetValueOrDefault(expense.AccountId, "Archived account"),
+            FrequencyName(expense.Frequency),
+            expense.ScheduleAnchorDate,
             expense.DayOfMonth,
-            MonthlySchedule.Resolve(
-                year,
-                month,
-                expense.DayOfMonth,
-                expense.MoveToNextWorkingDay,
-                holidays),
+            occurrence.NominalDate,
+            occurrence.DueDate,
             expense.MoveToNextWorkingDay,
             expense.Tags.Select(tag => tag.TagId).ToArray(),
             shares.Select(share => new ContributorShareDto(
                 share.ContributorId,
                 share.BasisPoints,
                 allocations[share.ContributorId])).ToArray());
+    }
+
+    private static ExpenseScheduleValue Schedule(SaveExpenseRequest request) =>
+        new(
+            ParseFrequency(request.Frequency),
+            request.ScheduleAnchorDate,
+            request.DayOfMonth,
+            request.MoveToNextWorkingDay);
+
+    private static ExpenseFrequency? ParseFrequency(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            null => null,
+            "monthly" => ExpenseFrequency.Monthly,
+            "weekly" => ExpenseFrequency.Weekly,
+            _ => throw new DomainValidationException(
+                "Expense frequency must be monthly, weekly, or null for a one-off."),
+        };
+
+    private static string? FrequencyName(ExpenseFrequency? value) =>
+        value switch
+        {
+            null => null,
+            ExpenseFrequency.Monthly => "monthly",
+            ExpenseFrequency.Weekly => "weekly",
+            _ => throw new InvalidOperationException(
+                "The stored expense frequency is not supported."),
+        };
+
+    private static DateOnly ResponseNominalDate(ExpenseScheduleValue schedule)
+    {
+        if (schedule.Frequency is null or ExpenseFrequency.Weekly)
+        {
+            return schedule.ScheduleAnchorDate!.Value;
+        }
+
+        var reference = schedule.ScheduleAnchorDate ??
+                        DateOnly.FromDateTime(DateTime.UtcNow);
+        return ExpenseSchedule.ProjectNominalDates(
+                schedule,
+                reference.Year,
+                reference.Month)
+            .Single();
     }
 
     private static BudgetTemplateDto MapBudget(BudgetTemplate budget) =>

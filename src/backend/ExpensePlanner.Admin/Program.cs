@@ -33,13 +33,6 @@ try
                 .Database.MigrateAsync(cancellationToken);
             Console.WriteLine("Database migrations applied.");
             break;
-        case "bootstrap-user":
-            Console.WriteLine(await SetupCodeAsync(
-                scope.ServiceProvider,
-                args,
-                (admin, email, token) => admin.BootstrapUserAsync(email, token),
-                cancellationToken));
-            break;
         case "reset-user":
             Console.WriteLine(await SetupCodeAsync(
                 scope.ServiceProvider,
@@ -105,7 +98,6 @@ static void Usage()
         Expense Planner administration
 
           migrate
-          bootstrap-user --email <address>
           reset-user --email <address>
           sync-bank-holidays
           health

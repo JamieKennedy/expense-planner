@@ -10,7 +10,7 @@
 - `src/backend/ExpensePlanner.Infrastructure`: EF Core/PostgreSQL, Identity, JWT, Redis
   and external holiday data.
 - `src/backend/ExpensePlanner.Api`: full controllers, HTTP security and Problem Details.
-- `src/backend/ExpensePlanner.Admin`: migrations, bootstrap/recovery and operations.
+- `src/backend/ExpensePlanner.Admin`: recovery, migrations and operational commands.
 - `src/frontend`: TanStack Start SSR React application.
 - `src/orchestration`: Aspire AppHost and shared telemetry/health defaults.
 - `tests`: interface, architecture and observable integration tests.
@@ -38,9 +38,13 @@ docker compose config
 - Contributor percentages are integer basis points and total exactly 10,000.
 - Even-split remainders and penny remainders are assigned deterministically in input
   order so allocations always sum to the source amount.
-- Expenses have at least one tag and contributor. Budget tags are unique per template.
-- Days are 1–31, clamped to the nominal month, then optionally advanced to the next
-  England/Wales working day. Crossing a month boundary does not change report ownership.
+- Expenses have at least one tag and contributor. One-offs use an exact date; monthly
+  expenses use a day from 1–31 and optional legacy-unbounded/start-month anchor; weekly
+  expenses repeat every seven days from an exact first-charge anchor. Budget tags are
+  unique per template.
+- Monthly days are clamped to the nominal month. Monthly and weekly occurrences can then
+  advance to the next England/Wales working day. Crossing a month boundary does not
+  change occurrence ownership.
 - Reports always recalculate from current definitions. Do not introduce snapshots or a
   paid/reconciled state in V1.
 - Multi-tag filtering returns distinct expenses. Each tag and matching budget line gets
@@ -77,7 +81,9 @@ docker compose config
 - Create migrations with the repository-pinned `dotnet-ef` tool.
 - Review the migration and generated SQL. Never amend a migration already applied outside
   a disposable local database.
-- Production migrations run only through Admin `migrate`, never during API startup.
+- The API applies pending migrations before it begins serving in every environment.
+- Keep migrations backward-compatible with rolling recovery, and never edit one that has
+  been applied outside a disposable local database.
 - Preserve composite planner indexes and add cross-planner tests for every new aggregate.
 - PostgreSQL backups are durable; Redis backups are unnecessary.
 

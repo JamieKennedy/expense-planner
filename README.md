@@ -1,8 +1,8 @@
 # Expense Planner
 
-A private, invite-only planner for recurring monthly income, expenses and budgets.
-Expense Planner projects today’s definitions onto any month; it is deliberately not a
-transaction ledger and does not track whether a payment cleared.
+A private, invite-only planner for monthly income, one-off and recurring expenses, and
+budgets. Expense Planner projects today’s definitions onto any month; it is deliberately
+not a transaction ledger and does not track whether a payment cleared.
 
 ## What it does
 
@@ -11,12 +11,24 @@ transaction ledger and does not track whether a payment cleared.
   deterministically.
 - Clamps days 29–31 in short months and can advance dates over weekends and official
   England/Wales bank holidays.
+- Schedules one-off expenses on an exact date, monthly expenses from a starting month,
+  and weekly expenses from their first charge date. Existing migrated monthly expenses
+  remain historically active.
 - Provides monthly income/out/net, contributor, tag and tag-linked budget reports.
-- Supports server-paginated expense filtering by account, contributor and tag.
-- Requires invite/bootstrap setup, password, TOTP MFA and rotating refresh sessions.
+- Expands weekly definitions into one row per occurrence and supports server-paginated
+  expense filtering by account, contributor and tag.
+- Opens one-time first-owner registration on an empty database, then requires invitations
+  and a password. Per-user TOTP MFA is recommended and enabled by default, but optional.
+  Refresh sessions rotate on every use.
 
-An expense with several tags appears once in filtered lists, but its full value belongs to
-each individual tag report. Tag totals are therefore intentionally non-additive.
+An occurrence with several tags appears once in filtered lists, but its full value belongs
+to each individual tag report. Tag totals are therefore intentionally non-additive.
+
+Dashboard, expense, and income month controls select the nominal reporting month.
+Working-day adjustment can move a displayed due date into the following month without
+moving that occurrence out of its nominal report month. Editing or deleting a definition
+recalculates earlier months; the application does not preserve a payment ledger or
+immutable historical snapshot.
 
 ## Architecture
 
@@ -55,6 +67,19 @@ authenticated planner.
 
 ## Development with Aspire
 
+For the first setup in Rider:
+
+1. Ensure Docker Desktop is running.
+2. Open `ExpensePlanner.slnx` and allow Rider to restore NuGet packages.
+3. Run the `ExpensePlanner.AppHost: https` launch profile.
+4. Open the Aspire dashboard URL shown by Rider.
+
+The AppHost generates the PostgreSQL development password once and stores it in the
+AppHost project's .NET user-secrets store. This keeps the password stable across runs
+while the named PostgreSQL data volume is retained.
+
+To start the same AppHost from a terminal instead:
+
 ```powershell
 dotnet restore ExpensePlanner.slnx --locked-mode
 pnpm --dir src/frontend install --frozen-lockfile
@@ -62,13 +87,36 @@ dotnet run --project src/orchestration/ExpensePlanner.AppHost
 ```
 
 Aspire starts PostgreSQL 18, Redis 8.2, the API and the frontend. It injects service
-discovery connection details. The first run may pull container images.
+discovery connection details. The API applies pending database migrations before it
+begins serving. The first run may pull container images.
+
+### Running the Admin CLI with Aspire
+
+Stop the AppHost in Rider first: `aspire exec` starts its own AppHost rather than attaching
+to the instance already running in Rider. From the repository root, enable the preview
+command once:
+
+```powershell
+aspire config set features.execCommandEnabled true
+```
+
+Then use the repository wrapper to run Admin commands in the `api` resource environment
+so they receive Aspire's PostgreSQL and Redis connection strings:
+
+```powershell
+.\scripts\admin.ps1 health
+.\scripts\admin.ps1 sync-bank-holidays
+```
+
+Each command starts the AppHost, waits until `api` is running, executes the Admin command,
+and shuts the AppHost down when it finishes. Aspire 13.3 may log a non-fatal
+`ASPNETCORE_URLS` substitution warning when it copies the web resource environment to the
+Admin process. Use the final `Aspire exec exit code` and Admin output to determine success.
 
 To run services without the AppHost:
 
 ```powershell
 docker compose up postgres redis
-dotnet run --project src/backend/ExpensePlanner.Admin -- migrate
 dotnet run --project src/backend/ExpensePlanner.Api
 pnpm --dir src/frontend dev
 ```
@@ -76,23 +124,27 @@ pnpm --dir src/frontend dev
 Copy `.env.example` to `.env` for Compose values. Never commit `.env`, signing keys,
 database dumps, setup codes or recovery codes.
 
+For a complete from-zero container setup, including local HTTPS certificate trust,
+first-owner registration, production DNS, backups and Admin CLI commands, follow the
+[Docker Compose setup and operations guide](docs/docker-compose.md).
+
 ## First user and account recovery
 
-The application has no public registration. Apply migrations, then create the first user:
+On an empty database, open `http://localhost:3000`. The application redirects to
+`/register`, where you enter the first owner's email. Registration creates a one-hour
+setup session and then asks for a password and whether to enable an authenticator. Ten
+single-use recovery codes are displayed when authenticator MFA is enabled. MFA is
+selected by default, can be skipped during setup, and can later be enabled or disabled
+per account from Settings.
 
-```powershell
-dotnet run --project src/backend/ExpensePlanner.Admin -- bootstrap-user --email you@example.com
-```
-
-The command is allowed only while no user exists. It prints a one-time `/setup?code=…`
-path valid for one hour. The setup page sets the password, requires a valid authenticator
-code and displays ten single-use recovery codes. Passwords never appear on the command
-line.
+First-owner registration is available only while no users exist. It closes immediately
+after the first pending owner is created; every later user requires an authenticated
+invitation.
 
 To recover an existing user:
 
 ```powershell
-dotnet run --project src/backend/ExpensePlanner.Admin -- reset-user --email you@example.com
+.\scripts\admin.ps1 reset-user -Email you@example.com
 ```
 
 This revokes active refresh-token families and issues a fresh one-hour setup code.
@@ -100,14 +152,16 @@ This revokes active refresh-token families and issues a fresh one-hour setup cod
 Other operations:
 
 ```powershell
-dotnet run --project src/backend/ExpensePlanner.Admin -- sync-bank-holidays
-dotnet run --project src/backend/ExpensePlanner.Admin -- health
+.\scripts\admin.ps1 sync-bank-holidays
+.\scripts\admin.ps1 health
 ```
 
 ## Migrations
 
-The API never migrates itself in production. Aspire and Compose run the Admin `migrate`
-command as a one-shot dependency before the API starts.
+The API applies pending EF Core migrations before opening its HTTP listener in development
+and production. Startup fails if PostgreSQL is unavailable or a migration fails. The
+Admin `migrate` command remains available as an operational fallback, but it is not part
+of normal first-run setup.
 
 ```powershell
 dotnet tool restore
@@ -119,24 +173,20 @@ dotnet tool run dotnet-ef migrations add MeaningfulName `
 
 Review generated SQL and model changes. Never edit an applied migration; add a new one.
 
-## Production with Compose
+## Docker Compose
 
-Generate a PKCS#8 RSA private key and set the values described in `.env.example`:
+The production-shaped stack runs PostgreSQL, Redis, API, Node SSR frontend and Caddy.
+The API applies pending migrations before becoming healthy. PostgreSQL and Redis are not
+published to the host.
+
+See the [Docker Compose setup and operations guide](docs/docker-compose.md) for the full
+local and production procedure. The short form, after preparing `.env` and the signing
+key, is:
 
 ```powershell
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out jwt-private.pem
-docker compose config
+docker compose config --quiet
 docker compose up --build -d
-```
-
-Caddy terminates HTTPS and exposes the Node SSR frontend and API on one origin. PostgreSQL
-and Redis are not published to the host. `migrate` must complete successfully before API
-startup. Use a real DNS name in `APP_HOST`; Caddy obtains and renews its certificate.
-
-Create the production bootstrap user through the one-shot Admin image:
-
-```powershell
-docker compose run --rm migrate bootstrap-user --email you@example.com
+docker compose ps
 ```
 
 ## Tests and checks
@@ -155,7 +205,8 @@ pnpm --dir src/frontend build
 
 Set `RUN_INTEGRATION_TESTS=true` to enable Docker-backed PostgreSQL integration tests.
 CI also verifies the generated TypeScript OpenAPI declarations, Playwright flows,
-container builds and vulnerability gates.
+Compose configuration, source dependencies and filesystem vulnerability gates. CI does
+not build Compose images; image builds are performed during deployment.
 
 ## Backup and restore
 
@@ -183,4 +234,5 @@ to `main`. Emergency `bug/hotfix-*` branches may target `main`, then `main` is m
 forward to `staging`.
 
 See [AGENTS.md](AGENTS.md) for engineering rules and
-[docs/roadmap.md](docs/roadmap.md) for the delivery slices.
+[docs/roadmap.md](docs/roadmap.md) for the delivery slices. Container deployment and
+operations are documented in [docs/docker-compose.md](docs/docker-compose.md).

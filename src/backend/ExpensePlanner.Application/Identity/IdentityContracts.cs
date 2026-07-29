@@ -2,6 +2,11 @@ namespace ExpensePlanner.Application.Identity;
 
 public interface IIdentityModule
 {
+    Task<bool> IsRegistrationOpenAsync(CancellationToken cancellationToken);
+    Task<FirstOwnerRegistrationResult> RegisterFirstOwnerAsync(
+        string email,
+        CancellationToken cancellationToken);
+
     Task<PasswordLoginResult> CheckPasswordAsync(
         string email,
         string password,
@@ -12,6 +17,19 @@ public interface IIdentityModule
         string code,
         CancellationToken cancellationToken);
 
+    Task<SecurityStatus> GetSecurityStatusAsync(CancellationToken cancellationToken);
+    Task<MfaEnrollmentResult> PrepareMfaEnrollmentAsync(
+        string password,
+        CancellationToken cancellationToken);
+    Task<MfaChangeResult> EnableMfaAsync(
+        string challengeId,
+        string code,
+        CancellationToken cancellationToken);
+    Task DisableMfaAsync(
+        string password,
+        string code,
+        CancellationToken cancellationToken);
+
     Task<TokenPair> RefreshAsync(string refreshToken, CancellationToken cancellationToken);
     Task RevokeAsync(string? refreshToken, CancellationToken cancellationToken);
     Task<InvitationResult> CreateInvitationAsync(string email, CancellationToken cancellationToken);
@@ -19,17 +37,22 @@ public interface IIdentityModule
     Task<SetupCompletionResult> CompleteSetupAsync(
         string code,
         string password,
-        string totpCode,
+        bool enableMfa,
+        string? totpCode,
         CancellationToken cancellationToken);
 }
 
 public interface IIdentityAdministration
 {
-    Task<string> BootstrapUserAsync(string email, CancellationToken cancellationToken);
     Task<string> ResetUserAsync(string email, CancellationToken cancellationToken);
 }
 
-public sealed record PasswordLoginResult(bool RequiresMfa, string ChallengeId);
+public sealed record FirstOwnerRegistrationResult(string SetupCode);
+
+public sealed record PasswordLoginResult(
+    bool RequiresMfa,
+    string? ChallengeId,
+    TokenPair? Tokens);
 
 public sealed record TokenPair(
     string AccessToken,
@@ -44,5 +67,15 @@ public sealed record MfaSetupResult(string Email, string SharedKey, string Authe
 
 public sealed record SetupCompletionResult(
     string Email,
+    bool MfaEnabled,
     IReadOnlyCollection<string> RecoveryCodes,
     TokenPair Tokens);
+
+public sealed record SecurityStatus(bool MfaEnabled);
+
+public sealed record MfaEnrollmentResult(
+    string ChallengeId,
+    string SharedKey,
+    string AuthenticatorUri);
+
+public sealed record MfaChangeResult(IReadOnlyCollection<string> RecoveryCodes);

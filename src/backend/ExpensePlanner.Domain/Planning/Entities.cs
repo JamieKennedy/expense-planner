@@ -49,7 +49,7 @@ public abstract class ReferenceData : PlannerOwnedEntity
         Touch();
     }
 
-    public void Archive()
+    public virtual void Archive()
     {
         IsArchived = true;
         Touch();
@@ -77,13 +77,26 @@ public sealed class Contributor : ReferenceData
     {
     }
 
-    public Contributor(Guid plannerId, string name)
+    public Contributor(Guid plannerId, string name, bool isOwner = false)
     {
         PlannerId = plannerId;
+        IsOwner = isOwner;
         SetName(name);
     }
 
+    public bool IsOwner { get; private set; }
+
     public void Rename(string name) => SetName(name);
+
+    public override void Archive()
+    {
+        if (IsOwner)
+        {
+            throw new DomainValidationException("The planner owner contributor cannot be archived.");
+        }
+
+        base.Archive();
+    }
 }
 
 public sealed class Tag : ReferenceData
@@ -133,19 +146,20 @@ public sealed class Expense : PlannerOwnedEntity
         string name,
         long amountPence,
         Guid accountId,
-        int dayOfMonth,
-        bool moveToNextWorkingDay,
+        ExpenseScheduleValue schedule,
         IEnumerable<Guid> tagIds,
         IEnumerable<ContributorShareValue> shares)
     {
         PlannerId = plannerId;
-        Update(name, amountPence, accountId, dayOfMonth, moveToNextWorkingDay, tagIds, shares);
+        Update(name, amountPence, accountId, schedule, tagIds, shares);
     }
 
     public string Name { get; private set; } = string.Empty;
     public long AmountPence { get; private set; }
     public Guid AccountId { get; private set; }
-    public int DayOfMonth { get; private set; }
+    public ExpenseFrequency? Frequency { get; private set; }
+    public DateOnly? ScheduleAnchorDate { get; private set; }
+    public int? DayOfMonth { get; private set; }
     public bool MoveToNextWorkingDay { get; private set; }
     public IReadOnlyCollection<ExpenseTag> Tags => _tags;
     public IReadOnlyCollection<ExpenseContributorShare> ContributorShares => _contributorShares;
@@ -154,16 +168,18 @@ public sealed class Expense : PlannerOwnedEntity
         string name,
         long amountPence,
         Guid accountId,
-        int dayOfMonth,
-        bool moveToNextWorkingDay,
+        ExpenseScheduleValue schedule,
         IEnumerable<Guid> tagIds,
         IEnumerable<ContributorShareValue> shares)
     {
         Name = RequiredName(name);
         AmountPence = PositiveAmount(amountPence);
         AccountId = accountId;
-        DayOfMonth = MonthlySchedule.ValidateDay(dayOfMonth);
-        MoveToNextWorkingDay = moveToNextWorkingDay;
+        var validatedSchedule = ExpenseSchedule.Validate(schedule);
+        Frequency = validatedSchedule.Frequency;
+        ScheduleAnchorDate = validatedSchedule.ScheduleAnchorDate;
+        DayOfMonth = validatedSchedule.DayOfMonth;
+        MoveToNextWorkingDay = validatedSchedule.MoveToNextWorkingDay;
 
         var distinctTags = tagIds.Distinct().ToArray();
         if (distinctTags.Length == 0)
@@ -181,6 +197,12 @@ public sealed class Expense : PlannerOwnedEntity
 
         Touch();
     }
+
+    public ExpenseScheduleValue Schedule => new(
+        Frequency,
+        ScheduleAnchorDate,
+        DayOfMonth,
+        MoveToNextWorkingDay);
 
     private static string RequiredName(string value) =>
         string.IsNullOrWhiteSpace(value)
@@ -292,14 +314,27 @@ public sealed class BudgetTemplate : PlannerOwnedEntity
             throw new DomainValidationException("A budget can contain only one line for each tag.");
         }
 
-        _lines.Clear();
-        _lines.AddRange(values.Select(line => new BudgetLine(
-            Id,
-            PlannerId,
-            line.Name,
-            line.AllowancePence,
-            line.TagId,
-            line.Shares)));
+        var requestedTags = values.Select(line => line.TagId).ToHashSet();
+        _lines.RemoveAll(line => !requestedTags.Contains(line.TagId));
+        foreach (var value in values)
+        {
+            var existing = _lines.SingleOrDefault(line => line.TagId == value.TagId);
+            if (existing is null)
+            {
+                _lines.Add(new BudgetLine(
+                    Id,
+                    PlannerId,
+                    value.Name,
+                    value.AllowancePence,
+                    value.TagId,
+                    value.Shares));
+            }
+            else
+            {
+                existing.Update(value.Name, value.AllowancePence, value.Shares);
+            }
+        }
+
         Touch();
     }
 }
@@ -322,14 +357,43 @@ public sealed class BudgetLine : PlannerOwnedEntity
     {
         BudgetTemplateId = budgetTemplateId;
         PlannerId = plannerId;
+        TagId = tagId;
+        Update(name, allowancePence, shares);
+    }
+
+    internal void Update(
+        string name,
+        long allowancePence,
+        IEnumerable<ContributorShareValue> shares)
+    {
         Name = string.IsNullOrWhiteSpace(name)
             ? throw new DomainValidationException("A budget line name is required.")
             : name.Trim();
         AllowancePence = Expense.PositiveAmount(allowancePence);
-        TagId = tagId;
-        _contributorShares.AddRange(
-            ContributorSplit.Validate(shares)
-                .Select(share => new BudgetLineContributorShare(Id, share.ContributorId, share.BasisPoints)));
+        var validatedShares = ContributorSplit.Validate(shares);
+        var requestedContributors = validatedShares
+            .Select(share => share.ContributorId)
+            .ToHashSet();
+        _contributorShares.RemoveAll(share =>
+            !requestedContributors.Contains(share.ContributorId));
+        foreach (var share in validatedShares)
+        {
+            var existing = _contributorShares.SingleOrDefault(item =>
+                item.ContributorId == share.ContributorId);
+            if (existing is null)
+            {
+                _contributorShares.Add(new BudgetLineContributorShare(
+                    Id,
+                    share.ContributorId,
+                    share.BasisPoints));
+            }
+            else
+            {
+                existing.UpdateBasisPoints(share.BasisPoints);
+            }
+        }
+
+        Touch();
     }
 
     public Guid BudgetTemplateId { get; private set; }
@@ -355,6 +419,8 @@ public sealed class BudgetLineContributorShare
     public Guid BudgetLineId { get; private set; }
     public Guid ContributorId { get; private set; }
     public int BasisPoints { get; private set; }
+
+    internal void UpdateBasisPoints(int basisPoints) => BasisPoints = basisPoints;
 }
 
 public sealed class BankHoliday

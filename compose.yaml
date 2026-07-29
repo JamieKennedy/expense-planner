@@ -26,13 +26,14 @@ services:
       timeout: 3s
       retries: 12
 
-  migrate:
+  admin:
+    profiles: ["tools"]
     build:
       context: .
       dockerfile: src/backend/Dockerfile
       target: admin
     restart: "no"
-    command: ["migrate"]
+    command: ["health"]
     environment:
       ConnectionStrings__expense-planner: Host=postgres;Port=5432;Database=expense_planner;Username=expense_planner;Password=${POSTGRES_PASSWORD}
       ConnectionStrings__cache: redis:6379
@@ -62,8 +63,10 @@ services:
     secrets:
       - jwt_private_key
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s

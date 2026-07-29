@@ -1,5 +1,69 @@
 // Generated from the API OpenAPI document. Do not edit.
 export interface paths {
+    "/api/auth/registration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["RegistrationAvailabilityResponse"];
+                        "application/json": components["schemas"]["RegistrationAvailabilityResponse"];
+                        "text/json": components["schemas"]["RegistrationAvailabilityResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FirstOwnerRegistrationRequest"];
+                    "text/json": components["schemas"]["FirstOwnerRegistrationRequest"];
+                    "application/*+json": components["schemas"]["FirstOwnerRegistrationRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["FirstOwnerRegistrationResponse"];
+                        "application/json": components["schemas"]["FirstOwnerRegistrationResponse"];
+                        "text/json": components["schemas"]["FirstOwnerRegistrationResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/session": {
         parameters: {
             query?: never;
@@ -67,9 +131,9 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["PasswordLoginResult"];
-                        "application/json": components["schemas"]["PasswordLoginResult"];
-                        "text/json": components["schemas"]["PasswordLoginResult"];
+                        "text/plain": components["schemas"]["LoginResponse"];
+                        "application/json": components["schemas"]["LoginResponse"];
+                        "text/json": components["schemas"]["LoginResponse"];
                     };
                 };
             };
@@ -314,6 +378,172 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/security": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["SecurityStatus"];
+                        "application/json": components["schemas"]["SecurityStatus"];
+                        "text/json": components["schemas"]["SecurityStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/security/mfa/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PrepareMfaEnrollmentRequest"];
+                    "text/json": components["schemas"]["PrepareMfaEnrollmentRequest"];
+                    "application/*+json": components["schemas"]["PrepareMfaEnrollmentRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["MfaEnrollmentResult"];
+                        "application/json": components["schemas"]["MfaEnrollmentResult"];
+                        "text/json": components["schemas"]["MfaEnrollmentResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/security/mfa/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EnableMfaRequest"];
+                    "text/json": components["schemas"]["EnableMfaRequest"];
+                    "application/*+json": components["schemas"]["EnableMfaRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["MfaChangeResponse"];
+                        "application/json": components["schemas"]["MfaChangeResponse"];
+                        "text/json": components["schemas"]["MfaChangeResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/security/mfa/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DisableMfaRequest"];
+                    "text/json": components["schemas"]["DisableMfaRequest"];
+                    "application/*+json": components["schemas"]["DisableMfaRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["MfaChangeResponse"];
+                        "application/json": components["schemas"]["MfaChangeResponse"];
+                        "text/json": components["schemas"]["MfaChangeResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/expenses": {
         parameters: {
             query?: never;
@@ -346,9 +576,9 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["PagedResultOfExpenseDto"];
-                        "application/json": components["schemas"]["PagedResultOfExpenseDto"];
-                        "text/json": components["schemas"]["PagedResultOfExpenseDto"];
+                        "text/plain": components["schemas"]["ExpensePageDto"];
+                        "application/json": components["schemas"]["ExpensePageDto"];
+                        "text/json": components["schemas"]["ExpensePageDto"];
                     };
                 };
             };
@@ -1081,7 +1311,8 @@ export interface components {
         CompleteSetupRequest: {
             code: string;
             password: string;
-            totpCode: string;
+            enableMfa?: null | boolean;
+            totpCode?: null | string;
         };
         ContributorShareDto: {
             /** Format: uuid */
@@ -1091,22 +1322,54 @@ export interface components {
             /** Format: int64 */
             allocatedPence?: null | number | string;
         };
+        DisableMfaRequest: {
+            password: string;
+            code: string;
+        };
+        EnableMfaRequest: {
+            challengeId: string;
+            code: string;
+        };
         ExpenseDto: {
             /** Format: uuid */
             id: string;
             name: string;
             /** Format: int64 */
             amountPence: number | string;
+            /** Format: int64 */
+            attributedAmountPence: number | string;
             /** Format: uuid */
             accountId: string;
             accountName: string;
+            frequency: null | string;
+            /** Format: date */
+            scheduleAnchorDate: null | string;
             /** Format: int32 */
-            dayOfMonth: number | string;
+            dayOfMonth: null | number | string;
+            /** Format: date */
+            nominalDate: string;
             /** Format: date */
             dueDate: string;
             moveToNextWorkingDay: boolean;
             tagIds: string[];
             contributorShares: components["schemas"]["ContributorShareDto"][];
+        };
+        ExpensePageDto: {
+            items: components["schemas"]["ExpenseDto"][];
+            /** Format: int32 */
+            page: number | string;
+            /** Format: int32 */
+            pageSize: number | string;
+            /** Format: int32 */
+            totalCount: number | string;
+            /** Format: int64 */
+            totalAmountPence: number | string;
+        };
+        FirstOwnerRegistrationRequest: {
+            email: string;
+        };
+        FirstOwnerRegistrationResponse: {
+            setupCode: string;
         };
         IncomeItemDto: {
             /** Format: uuid */
@@ -1136,6 +1399,19 @@ export interface components {
             email: string;
             password: string;
         };
+        LoginResponse: {
+            requiresMfa: boolean;
+            challengeId: null | string;
+        };
+        MfaChangeResponse: {
+            mfaEnabled: boolean;
+            recoveryCodes: string[];
+        };
+        MfaEnrollmentResult: {
+            challengeId: string;
+            sharedKey: string;
+            authenticatorUri: string;
+        };
         MfaRequest: {
             challengeId: string;
             code: string;
@@ -1154,6 +1430,7 @@ export interface components {
             /** Format: int64 */
             projectedNetPence: number | string;
             contributorCosts: components["schemas"]["NamedAmountDto"][];
+            accountCosts: components["schemas"]["NamedAmountDto"][];
             tagCosts: components["schemas"]["NamedAmountDto"][];
             budgetLines: components["schemas"]["BudgetLineOverviewDto"][];
             budgetContributions: components["schemas"]["NamedAmountDto"][];
@@ -1165,18 +1442,8 @@ export interface components {
             /** Format: int64 */
             amountPence: number | string;
         };
-        PagedResultOfExpenseDto: {
-            items: components["schemas"]["ExpenseDto"][];
-            /** Format: int32 */
-            page: number | string;
-            /** Format: int32 */
-            pageSize: number | string;
-            /** Format: int32 */
-            totalCount: number | string;
-        };
-        PasswordLoginResult: {
-            requiresMfa: boolean;
-            challengeId: string;
+        PrepareMfaEnrollmentRequest: {
+            password: string;
         };
         ReferenceDataSnapshot: {
             accounts: components["schemas"]["ReferenceItemDto"][];
@@ -1189,6 +1456,11 @@ export interface components {
             name: string;
             isArchived: boolean;
             colour?: null | string;
+            /** @default false */
+            isOwner: boolean;
+        };
+        RegistrationAvailabilityResponse: {
+            available: boolean;
         };
         ReplaceBudgetRequest: {
             lines: components["schemas"]["SaveBudgetLineRequest"][];
@@ -1207,8 +1479,11 @@ export interface components {
             amountPence: number | string;
             /** Format: uuid */
             accountId: string;
+            frequency: null | string;
+            /** Format: date */
+            scheduleAnchorDate: null | string;
             /** Format: int32 */
-            dayOfMonth: number | string;
+            dayOfMonth: null | number | string;
             moveToNextWorkingDay: boolean;
             tagIds: string[];
             contributorShares: components["schemas"]["ContributorShareDto"][];
@@ -1230,6 +1505,9 @@ export interface components {
             name: string;
             colour: string;
         };
+        SecurityStatus: {
+            mfaEnabled: boolean;
+        };
         SessionResponse: {
             /** Format: uuid */
             userId: string;
@@ -1242,6 +1520,7 @@ export interface components {
         };
         SetupCompletionResponse: {
             email: string;
+            mfaEnabled: boolean;
             recoveryCodes: string[];
         };
     };

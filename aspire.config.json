@@ -1,0 +1,8 @@
+{
+  "appHost": {
+    "path": "src/orchestration/ExpensePlanner.AppHost/ExpensePlanner.AppHost.csproj"
+  },
+  "features": {
+    "execCommandEnabled": true
+  }
+}

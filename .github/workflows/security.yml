@@ -35,14 +35,13 @@ jobs:
       - run: pnpm --dir src/frontend install --frozen-lockfile
       - run: pnpm --dir src/frontend build
       - uses: github/codeql-action/analyze@v4
-      - name: Validate and build Compose
+      - name: Validate Compose
         env:
           POSTGRES_PASSWORD: validation-only
           JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/expense-planner-ci-jwt.pem
         run: |
           openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$JWT_PRIVATE_KEY_FILE"
           docker compose config --quiet
-          docker compose build
       - uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
